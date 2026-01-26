@@ -2,7 +2,7 @@ import { fetchAllWhopData } from '@/lib/whop/fetchers';
 import { createUnifiedTableData } from '@/lib/data/processor';
 
 export default async function WhopDashboardPage() {
-  let rawData = [];
+  let rawData: any = null;
   let error: string | null = null;
 
   try {
@@ -12,18 +12,18 @@ export default async function WhopDashboardPage() {
     error = e.message;
   }
 
-  const tableData = createUnifiedTableData(rawData);
-
-  if (error) {
+  if (error || !rawData) {
     return (
       <div className="p-8">
         <div className="bg-red-50 border border-red-200 text-red-700 px-4 py-3 rounded relative" role="alert">
           <strong className="font-bold">Error fetching data: </strong>
-          <span className="block sm:inline">{error}. Please check your connection to api.whop.com.</span>
+          <span className="block sm:inline">{error || 'No data received'}. Please check your connection to api.whop.com.</span>
         </div>
       </div>
     );
   }
+
+  const tableData = createUnifiedTableData(rawData);
 
   // Simple KPI calculations for the demo
   const totalRevenue = tableData.reduce((sum: number, row: any) => sum + (row.total_payments || 0), 0);

@@ -3,8 +3,19 @@
 import { useState, useEffect } from 'react';
 import { getCashCollectedData } from '../actions';
 
+interface CashCollectedRow {
+  date: string;
+  contactName: string;
+  contactEmail: string;
+  type: string;
+  amount: string;
+  closer: string;
+  portal: string;
+  [key: string]: string;
+}
+
 export default function DashboardPage() {
-  const [data, setData] = useState<any[]>([]);
+  const [data, setData] = useState<CashCollectedRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -12,13 +23,13 @@ export default function DashboardPage() {
     const fetchData = async () => {
       try {
         const result = await getCashCollectedData();
-        if (result.success) {
-          setData(result.data);
+        if (result.success && result.data) {
+          setData(result.data as CashCollectedRow[]);
         } else {
           setError(result.error || 'Failed to load data');
         }
-      } catch (err: any) {
-        setError(err.message);
+      } catch (err: unknown) {
+        setError(err instanceof Error ? err.message : 'An unknown error occurred');
       } finally {
         setLoading(false);
       }
