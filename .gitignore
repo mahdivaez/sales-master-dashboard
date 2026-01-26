@@ -38,4 +38,7 @@ yarn-error.log*
 
 # typescript
 *.tsbuildinfo
+
+google-service-account.json
+halalceo-dashboard-c0bc71995e29.json
 next-env.d.ts
