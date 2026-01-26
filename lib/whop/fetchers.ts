@@ -1,5 +1,10 @@
 import { whopFetch, whopFetchAll, COMPANY_ID } from './client';
 
+export async function getProducts() {
+  const commonParams = { company_id: COMPANY_ID };
+  return await whopFetchAll('/products', commonParams);
+}
+
 export async function fetchAllWhopData() {
   console.log('Starting data fetch (Direct API)...');
   
@@ -27,12 +32,16 @@ export async function fetchAllWhopData() {
   
   for (let i = 0; i < uniqueUserIds.length; i += BATCH_SIZE) {
     const batch = uniqueUserIds.slice(i, i + BATCH_SIZE);
+    console.log(`Fetching batch ${i / BATCH_SIZE + 1} of ${Math.ceil(uniqueUserIds.length / BATCH_SIZE)}...`);
     try {
       const batchUsers = await Promise.all(
-        batch.map(id => whopFetch(`/users/${id}`).catch((err: any) => {
-          console.error(`Error fetching user ${id}:`, err);
-          return null;
-        }))
+        batch.map(id => {
+          console.log(`Requesting user: ${id}`);
+          return whopFetch(`/users/${id}`).catch((err: any) => {
+            console.error(`Error fetching user ${id}:`, err);
+            return null;
+          });
+        })
       );
       users.push(...batchUsers.filter(Boolean));
       await delay(500);

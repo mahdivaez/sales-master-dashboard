@@ -23,6 +23,7 @@ export async function whopFetch(endpoint: string, params: Record<string, string>
 
       if (!response.ok) {
         const error = await response.text();
+        console.error(`Whop API Error Details - URL: ${url.toString()}, Status: ${response.status}, Body: ${error}`);
         throw new Error(`Whop API Error (${response.status}): ${error}`);
       }
 
