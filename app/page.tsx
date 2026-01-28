@@ -14,6 +14,7 @@ import { UnifiedUser } from '@/types';
 import { DateRange } from 'react-day-picker';
 import { subDays } from 'date-fns';
 import Link from 'next/link';
+import { useCallback } from 'react';
 
 export default function DashboardPage() {
   const [data, setData] = useState<DashboardData | null>(null);
@@ -62,7 +63,7 @@ export default function DashboardPage() {
     document.body.removeChild(link);
   };
 
-  async function fetchDashboard() {
+  const fetchDashboard = useCallback(async () => {
     setLoading(true);
     try {
       let url = '/api/dashboard';
@@ -93,11 +94,11 @@ export default function DashboardPage() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [dateRange, companyId]);
 
   useEffect(() => {
     fetchDashboard();
-  }, [dateRange, companyId]);
+  }, [fetchDashboard]);
 
   const filteredUsers = data?.users.filter(user => {
     const matchesSearch = user.email.toLowerCase().includes(searchTerm.toLowerCase()) ||
