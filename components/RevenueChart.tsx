@@ -63,7 +63,7 @@ export const RevenueChart: React.FC<RevenueChartProps> = ({ data }) => {
                 boxShadow: '0 4px 6px -1px rgb(0 0 0 / 0.1)'
               }}
               itemStyle={{ color: '#2563eb', fontWeight: 700 }}
-              formatter={(value: number) => [`$${value.toFixed(2)}`, 'Revenue']}
+              formatter={(value: any) => [`$${Number(value || 0).toFixed(2)}`, 'Revenue']}
             />
             <Area
               type="monotone"
