@@ -35,7 +35,7 @@ export default function CashCollectedTable() {
       try {
         const result = await getCashCollectedData();
         if (result.success) {
-          setData(result.data);
+          setData((result.data as CashCollectedRow[]) || []);
         } else {
           setError(result.error || 'Failed to fetch data');
         }
