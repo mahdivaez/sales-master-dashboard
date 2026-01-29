@@ -862,25 +862,34 @@ export async function getCashCollectedData(spreadsheetUrl?: string) {
   const url = spreadsheetUrl || defaultUrl;
 
   try {
-    // Path to service account key file
-    const keyPath = path.join(process.cwd(), 'halalceo-dashboard-c0bc71995e29.json');
+    let auth;
     
-    // Check if key file exists
-    if (!fs.existsSync(keyPath)) {
-      throw new Error('Service account key file not found: halalceo-dashboard-c0bc71995e29.json');
+    // Try to use environment variables first (recommended for Vercel)
+    if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+      auth = new google.auth.GoogleAuth({
+        credentials: {
+          client_email: process.env.GOOGLE_CLIENT_EMAIL,
+          private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        },
+        scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+      });
+    } else {
+      // Fallback to local JSON file for development
+      const keyPath = path.join(process.cwd(), 'halalceo-dashboard-c0bc71995e29.json');
+      
+      if (!fs.existsSync(keyPath)) {
+        throw new Error('Google Sheets credentials not found. Please set GOOGLE_CLIENT_EMAIL and GOOGLE_PRIVATE_KEY environment variables, or ensure the service account key file exists locally.');
+      }
+
+      const credentials = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+      auth = new google.auth.GoogleAuth({
+        credentials: {
+          client_email: credentials.client_email,
+          private_key: credentials.private_key.replace(/\\n/g, '\n'),
+        },
+        scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+      });
     }
-
-    // Read and parse credentials
-    const credentials = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
-
-    // Create Google Auth with JWT
-    const auth = new google.auth.GoogleAuth({
-      credentials: {
-        client_email: credentials.client_email,
-        private_key: credentials.private_key.replace(/\\n/g, '\n'),
-      },
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-    });
 
     // Extract spreadsheetId from URL using regex
     const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
@@ -970,19 +979,33 @@ export async function getPipelineStageData(spreadsheetUrl?: string) {
   const url = spreadsheetUrl || defaultUrl;
 
   try {
-    const keyPath = path.join(process.cwd(), 'halalceo-dashboard-c0bc71995e29.json');
-    if (!fs.existsSync(keyPath)) {
-      throw new Error('Service account key file not found');
-    }
+    let auth;
+    
+    // Try to use environment variables first
+    if (process.env.GOOGLE_CLIENT_EMAIL && process.env.GOOGLE_PRIVATE_KEY) {
+      auth = new google.auth.GoogleAuth({
+        credentials: {
+          client_email: process.env.GOOGLE_CLIENT_EMAIL,
+          private_key: process.env.GOOGLE_PRIVATE_KEY.replace(/\\n/g, '\n'),
+        },
+        scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+      });
+    } else {
+      // Fallback to local JSON file
+      const keyPath = path.join(process.cwd(), 'halalceo-dashboard-c0bc71995e29.json');
+      if (!fs.existsSync(keyPath)) {
+        throw new Error('Google Sheets credentials not found');
+      }
 
-    const credentials = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
-    const auth = new google.auth.GoogleAuth({
-      credentials: {
-        client_email: credentials.client_email,
-        private_key: credentials.private_key.replace(/\\n/g, '\n'),
-      },
-      scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
-    });
+      const credentials = JSON.parse(fs.readFileSync(keyPath, 'utf8'));
+      auth = new google.auth.GoogleAuth({
+        credentials: {
+          client_email: credentials.client_email,
+          private_key: credentials.private_key.replace(/\\n/g, '\n'),
+        },
+        scopes: ['https://www.googleapis.com/auth/spreadsheets.readonly'],
+      });
+    }
 
     const match = url.match(/\/d\/([a-zA-Z0-9_-]+)/);
     if (!match) throw new Error('Invalid Google Sheet URL');
