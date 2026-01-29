@@ -1,11 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { GhlOpportunitiesTable } from '@/components/ghl/GhlOpportunitiesTable';
 import { GhlContactsTable } from '@/components/ghl/GhlContactsTable';
 
-export default function GhlTestTablePage() {
+function GhlTestTableContent() {
   const searchParams = useSearchParams();
   const [opportunities, setOpportunities] = useState<any[]>([]);
   const [contacts, setContacts] = useState<any[]>([]);
@@ -106,5 +106,13 @@ export default function GhlTestTablePage() {
         Showing {view === 'opportunities' ? opportunities.length : contacts.length} {view}
       </div>
     </div>
+  );
+}
+
+export default function GhlTestTablePage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-center">Loading...</div>}>
+      <GhlTestTableContent />
+    </Suspense>
   );
 }
