@@ -8,8 +8,8 @@ export async function GET(request: NextRequest) {
   let accessToken = request.headers.get('Authorization')?.split(' ')[1];
 
   // Fallback to environment variables if not provided in request
-  if (!locationId) locationId = process.env.LOCATION_ID || null;
-  if (!accessToken) accessToken = process.env.GHL_ACCESS_TOKEN || null;
+  if (!locationId) locationId = process.env.LOCATION_ID || undefined;
+  if (!accessToken) accessToken = process.env.GHL_ACCESS_TOKEN || undefined;
 
   if (!email || !locationId || !accessToken) {
     console.error('Missing GHL parameters:', { email: !!email, locationId: !!locationId, accessToken: !!accessToken });
