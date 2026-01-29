@@ -1,12 +1,11 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { getUnifiedUserData } from './actions';
 import { UnifiedUserTable } from '@/components/UnifiedUserTable';
 import { Loader2, AlertCircle, RefreshCw, Search, LayoutDashboard } from 'lucide-react';
 import { DateRange } from 'react-day-picker';
 import { DateRangePicker } from '@/components/DateRangePicker';
-import Link from 'next/link';
 
 export default function UnifiedDatabasePage() {
   const [loading, setLoading] = useState(true);
@@ -17,9 +16,10 @@ export default function UnifiedDatabasePage() {
   const [hasMore, setHasMore] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
-  const fetchData = async (currentPage = 1, search = '') => {
+  const fetchData = useCallback(async (currentPage = 1, search = '') => {
     if (currentPage === 1) setLoading(true);
     setError(null);
     try {
@@ -59,7 +59,7 @@ export default function UnifiedDatabasePage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [dateRange]);
 
   useEffect(() => {
     fetchData(1, searchTerm);

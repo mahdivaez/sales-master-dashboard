@@ -52,9 +52,9 @@ export async function GET(request: NextRequest) {
 
         while (remainingToScan > 0) {
           const currentLimit = 100; // Always fetch max for efficiency when scanning
-          const url = `https://services.leadconnectorhq.com/contacts/?locationId=${locationId}&limit=${currentLimit}${lastId ? `&startAfterId=${lastId}` : ''}`;
+          const fetchUrl = `https://services.leadconnectorhq.com/contacts/?locationId=${locationId}&limit=${currentLimit}${lastId ? `&startAfterId=${lastId}` : ''}`;
           
-          const response = await fetch(url, {
+          const response = await fetch(fetchUrl, {
             headers: {
               'Authorization': `Bearer ${tokenParam}`,
               'Version': '2021-07-28',
@@ -157,8 +157,8 @@ export async function GET(request: NextRequest) {
         });
       } else {
         // Default to contacts
-        const endpoint = `/contacts/?locationId=${locationId}&limit=${limitParam}`;
-        const response = await fetch(`https://services.leadconnectorhq.com${endpoint}`, {
+        const ghlEndpoint = `/contacts/?locationId=${locationId}&limit=${limitParam}`;
+        const response = await fetch(`https://services.leadconnectorhq.com${ghlEndpoint}`, {
           headers: {
             'Authorization': `Bearer ${tokenParam}`,
             'Version': '2021-07-28',
