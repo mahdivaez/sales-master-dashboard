@@ -39,7 +39,6 @@ async function whopFetch(endpoint: string, params: Record<string, string> = {}, 
         },
         cache: 'no-store',
         signal: controller.signal,
-        // @ts-ignore
         next: { revalidate: 0 } 
       });
 

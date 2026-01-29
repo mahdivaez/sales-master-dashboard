@@ -7,6 +7,7 @@ export async function GET(request: NextRequest) {
   const locationId = searchParams.get('locationId') || process.env.GHL_LOCATION_ID;
   const filterUnified = searchParams.get('filterUnified') === 'true';
   
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const highLevel = new HighLevel({
     clientId: process.env.HIGHLEVEL_CLIENT_ID!,
     clientSecret: process.env.HIGHLEVEL_CLIENT_SECRET!,
@@ -25,8 +26,8 @@ export async function GET(request: NextRequest) {
       const type = searchParams.get('type') || 'contacts';
       
       // 1. Get Unified Database Emails if filtering is requested
-      let unifiedEmails: Set<string> = new Set();
-      let sampleUnified: string[] = [];
+      const unifiedEmails: Set<string> = new Set();
+      const sampleUnified: string[] = [];
       if (filterUnified) {
         // Increase limit to get more users from unified database for better matching
         const unifiedResult = await getUnifiedUserData({ limit: 5000 }); 
@@ -47,7 +48,7 @@ export async function GET(request: NextRequest) {
         let lastId: string | null = null;
         // If filtering, we might need to scan a lot of GHL contacts to find matches
         let remainingToScan = filterUnified ? 5000 : limitParam; 
-        let sampleGhl: string[] = [];
+        const sampleGhl: string[] = [];
 
         while (remainingToScan > 0) {
           const currentLimit = 100; // Always fetch max for efficiency when scanning
@@ -156,7 +157,7 @@ export async function GET(request: NextRequest) {
         });
       } else {
         // Default to contacts
-        let endpoint = `/contacts/?locationId=${locationId}&limit=${limitParam}`;
+        const endpoint = `/contacts/?locationId=${locationId}&limit=${limitParam}`;
         const response = await fetch(`https://services.leadconnectorhq.com${endpoint}`, {
           headers: {
             'Authorization': `Bearer ${tokenParam}`,

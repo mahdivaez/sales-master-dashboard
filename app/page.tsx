@@ -64,7 +64,7 @@ export default function UnifiedDatabasePage() {
   useEffect(() => {
     fetchData(1, searchTerm);
     setIsInitialLoad(false);
-  }, [searchTerm, dateRange]);
+  }, [searchTerm, dateRange, fetchData]);
 
   const loadMore = () => {
     const nextPage = page + 1;
