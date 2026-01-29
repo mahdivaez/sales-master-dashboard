@@ -7,12 +7,13 @@ const nextConfig: NextConfig = {
     }
     return config;
   },
-  // Next.js 15 uses 'turbo' property in the root of NextConfig, not in experimental
-  // However, to force webpack and avoid the Turbopack error in Vercel (which might be defaulting to it)
-  // we can also try to ensure we aren't using any turbo-only flags.
-  // The error suggests passing --webpack or setting turbopack: {}
-  // @ts-ignore - turbopack property exists in NextConfig for Next.js 15
-  turbo: {}
+  // In Next.js 16, Turbopack is enabled by default.
+  // To silence the error when using a custom webpack config, 
+  // we must provide an empty turbopack config object.
+  // The key is 'experimental.turbopack' in Next.js 16.
+  experimental: {
+    turbopack: {}
+  }
 };
 
 export default nextConfig;
