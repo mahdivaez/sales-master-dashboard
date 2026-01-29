@@ -16,7 +16,6 @@ export default function UnifiedDatabasePage() {
   const [hasMore, setHasMore] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const [isInitialLoad, setIsInitialLoad] = useState(true);
 
   const fetchData = useCallback(async (currentPage = 1, search = '') => {
@@ -63,8 +62,10 @@ export default function UnifiedDatabasePage() {
 
   useEffect(() => {
     fetchData(1, searchTerm);
-    setIsInitialLoad(false);
-  }, [searchTerm, dateRange, fetchData]);
+    if (isInitialLoad) {
+      setIsInitialLoad(false);
+    }
+  }, [searchTerm, dateRange, fetchData, isInitialLoad]);
 
   const loadMore = () => {
     const nextPage = page + 1;

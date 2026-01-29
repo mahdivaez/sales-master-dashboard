@@ -7,11 +7,11 @@ export async function GET(request: NextRequest) {
   const locationId = searchParams.get('locationId') || process.env.GHL_LOCATION_ID;
   const filterUnified = searchParams.get('filterUnified') === 'true';
   
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
   const highLevel = new HighLevel({
     clientId: process.env.HIGHLEVEL_CLIENT_ID!,
     clientSecret: process.env.HIGHLEVEL_CLIENT_SECRET!,
   });
+  console.log('HighLevel SDK initialized:', !!highLevel);
 
   // Try to get token from query param for easy testing
   const tokenParam = searchParams.get('token');
@@ -52,7 +52,7 @@ export async function GET(request: NextRequest) {
 
         while (remainingToScan > 0) {
           const currentLimit = 100; // Always fetch max for efficiency when scanning
-          const fetchUrl = `https://services.leadconnectorhq.com/contacts/?locationId=${locationId}&limit=${currentLimit}${lastId ? `&startAfterId=${lastId}` : ''}`;
+          const fetchUrl: string = `https://services.leadconnectorhq.com/contacts/?locationId=${locationId}&limit=${currentLimit}${lastId ? `&startAfterId=${lastId}` : ''}`;
           
           const response = await fetch(fetchUrl, {
             headers: {
@@ -157,7 +157,7 @@ export async function GET(request: NextRequest) {
         });
       } else {
         // Default to contacts
-        const ghlEndpoint = `/contacts/?locationId=${locationId}&limit=${limitParam}`;
+        const ghlEndpoint: string = `/contacts/?locationId=${locationId}&limit=${limitParam}`;
         const response = await fetch(`https://services.leadconnectorhq.com${ghlEndpoint}`, {
           headers: {
             'Authorization': `Bearer ${tokenParam}`,
