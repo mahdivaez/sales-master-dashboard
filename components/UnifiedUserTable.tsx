@@ -1,8 +1,9 @@
 'use client';
 
-import React, { useState } from 'react';
-import { Search, Filter, ExternalLink, Mail, User, Database, Sheet, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+import { Search, Filter, ExternalLink, Mail, User, Database, Sheet, ArrowUp, ArrowDown, ArrowUpDown, Zap } from 'lucide-react';
 import { UnifiedUserModal } from './UnifiedUserModal';
+import { getAccessToken, isAuthenticated } from '@/lib/ghl-client';
 
 interface UnifiedUserTableProps {
   users: any[];
@@ -16,6 +17,43 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
   const [selectedUser, setSelectedUser] = useState<any | null>(null);
   const [sortField, setSortField] = useState<SortField | null>('lastPaymentDate');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [ghlDataMap, setGhlDataMap] = useState<Record<string, any>>({});
+  const [isGhlAuthenticated, setIsGhlAuthenticated] = useState(false);
+
+  useEffect(() => {
+    setIsGhlAuthenticated(isAuthenticated());
+  }, []);
+
+  const fetchGhlForUser = async (email: string) => {
+    if (ghlDataMap[email]) return;
+
+    const token = getAccessToken();
+    const locId = localStorage.getItem('ghl_location_id');
+    
+    // If no client-side token, we still want to try the server-side fetch 
+    // which might use the environment variable token
+    
+    try {
+      console.log(`Fetching GHL data for user: ${email}`);
+      const res = await fetch(`/api/ghl/user-data?email=${encodeURIComponent(email)}&locationId=${locId || ''}`, {
+        headers: token ? { 'Authorization': `Bearer ${token}` } : {}
+      });
+      const data = await res.json();
+      console.log(`GHL Data fetched for ${email}:`, data);
+      
+      // Map the data to match the structure expected by the modal and table
+      const formattedData = {
+        ...data,
+        // Ensure pipelines and users are available for name resolution
+        ghlUsers: data.ghlUsers || [],
+        pipelines: data.pipelines || []
+      };
+      
+      setGhlDataMap(prev => ({ ...prev, [email]: formattedData }));
+    } catch (err) {
+      console.error('Error fetching GHL data for user:', email, err);
+    }
+  };
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -30,10 +68,26 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
     }
   };
 
-  const filteredUsers = users.filter(user => 
-    (user.email && user.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
-    (user.name && user.name.toLowerCase().includes(searchTerm.toLowerCase()))
-  );
+  const filteredUsers = users.filter(user => {
+    // Search is now handled server-side, but we keep a simple client-side filter for immediate feedback
+    const matchesSearch = (user.email && user.email.toLowerCase().includes(searchTerm.toLowerCase())) ||
+      (user.name && user.name.toLowerCase().includes(searchTerm.toLowerCase()));
+    
+    // Check for Whop activity (payments or memberships)
+    const hasWhopActivity = (user.totalSpentWhop > 0) || 
+                           (user.whopData?.payments && user.whopData.payments.length > 0) || 
+                           (user.whopData?.memberships && user.whopData.memberships.length > 0);
+                        
+    // Check for Sheet activity (Cash Collected entries)
+    const hasSheetActivity = (user.totalSpentSheet > 0) || 
+                            (user.sheetData && user.sheetData.length > 0);
+
+    // A user is "empty" if they have NO Whop activity AND NO Sheet activity
+    // We ignore Pipeline data for this specific filter as requested
+    const hasNoFinancialData = !hasWhopActivity && !hasSheetActivity;
+
+    return matchesSearch && !hasNoFinancialData;
+  });
 
   const sortedUsers = [...filteredUsers].sort((a, b) => {
     if (!sortField || !sortOrder) return 0;
@@ -61,6 +115,14 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
     return <ArrowDown className="w-3 h-3 ml-1 text-blue-600" />;
   };
 
+  const getGhlStageName = (ghlData: any, pipelineId: string, stageId: string) => {
+    if (ghlData?.ghlStageName && ghlData.ghlStageName !== 'Unknown') return ghlData.ghlStageName;
+    if (!ghlData?.pipelines) return 'Unknown';
+    const pipeline = ghlData.pipelines.find((p: any) => p.id === pipelineId);
+    const stage = pipeline?.stages?.find((s: any) => s.id === stageId);
+    return stage ? stage.name : 'Unknown';
+  };
+
   return (
     <div className="bg-white rounded-3xl shadow-xl border border-gray-100 overflow-hidden">
       <div className="p-8 border-b border-gray-50">
@@ -83,118 +145,187 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
       </div>
 
       <div className="overflow-x-auto">
-        <table className="w-full text-left border-collapse">
-          <thead>
-            <tr className="bg-gray-50/50">
-              <th 
-                className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest cursor-pointer hover:text-gray-600 transition-colors"
-                onClick={() => handleSort('name')}
-              >
-                <div className="flex items-center">
-                  User <SortIcon field="name" />
-                </div>
-              </th>
-              <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Source</th>
-              <th 
-                className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right cursor-pointer hover:text-gray-600 transition-colors"
-                onClick={() => handleSort('totalSpentWhop')}
-              >
-                <div className="flex items-center justify-end">
-                  AI CEOS Revenue <SortIcon field="totalSpentWhop" />
-                </div>
-              </th>
-              <th 
-                className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right cursor-pointer hover:text-gray-600 transition-colors"
-                onClick={() => handleSort('totalSpentSheet')}
-              >
-                <div className="flex items-center justify-end">
-                  Sheet Revenue <SortIcon field="totalSpentSheet" />
-                </div>
-              </th>
-              <th 
-                className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest cursor-pointer hover:text-gray-600 transition-colors"
-                onClick={() => handleSort('lastPaymentDate')}
-              >
-                <div className="flex items-center">
-                  Last Activity <SortIcon field="lastPaymentDate" />
-                </div>
-              </th>
-              <th className="px-8 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Actions</th>
-            </tr>
-          </thead>
-          <tbody className="divide-y divide-gray-50">
-            {sortedUsers.map((user) => (
-              <tr 
-                key={user.email} 
-                className="hover:bg-blue-50/30 transition-colors group cursor-pointer"
-                onClick={() => setSelectedUser(user)}
-              >
-                <td className="px-8 py-5">
-                  <div className="flex items-center gap-4">
-                    <div className="w-10 h-10 bg-blue-100 rounded-xl flex items-center justify-center text-blue-600 font-bold">
-                      {user.name ? user.name.charAt(0) : '?'}
-                    </div>
-                    <div>
-                      <p className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors">{user.name || 'Unknown'}</p>
-                      <p className="text-xs text-gray-500 font-medium">{user.email}</p>
-                    </div>
+        <div className="min-w-[1600px]">
+          <table className="w-full text-left border-collapse">
+            <thead>
+              <tr className="bg-gray-50/50">
+                <th 
+                  className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest cursor-pointer hover:text-gray-600 transition-colors"
+                  onClick={() => handleSort('name')}
+                >
+                  <div className="flex items-center">
+                    Name <SortIcon field="name" />
                   </div>
-                </td>
-                <td className="px-8 py-5">
-                  <div className="flex flex-wrap gap-2">
-                    {user.source.includes('Whop') && (
-                      <span className="flex items-center gap-1 px-2 py-1 bg-indigo-50 text-indigo-600 rounded-lg text-[10px] font-black uppercase tracking-wider">
-                        <Database className="w-3 h-3" /> AI CEOS
-                      </span>
-                    )}
-                    {user.source.includes('Sheet') && (
-                      <span className="flex items-center gap-1 px-2 py-1 bg-emerald-50 text-emerald-600 rounded-lg text-[10px] font-black uppercase tracking-wider">
-                        <Sheet className="w-3 h-3" /> Sheet
-                      </span>
-                    )}
-                    {user.source.includes('Pipeline') && (
-                      <span className="flex items-center gap-1 px-2 py-1 bg-blue-50 text-blue-600 rounded-lg text-[10px] font-black uppercase tracking-wider">
-                        <Database className="w-3 h-3" /> Pipeline
-                      </span>
-                    )}
+                </th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Contact</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Email</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Value</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Status</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Source</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Stage</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Pipeline</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Assigned To</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Created</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Tags</th>
+                <th 
+                  className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right cursor-pointer hover:text-gray-600 transition-colors"
+                  onClick={() => handleSort('totalSpentWhop')}
+                >
+                  <div className="flex items-center justify-end">
+                    AI CEOS Revenue <SortIcon field="totalSpentWhop" />
                   </div>
-                </td>
-                <td className="px-8 py-5 text-right">
-                  <div className="flex flex-col items-end">
-                    <span className="text-sm font-bold text-gray-900">
-                      ${user.totalSpentWhop.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                    </span>
-                    {user.totalSpentWhopBeforeFees && (
-                      <span className="text-[10px] font-medium text-gray-500">
-                        <span className="line-through">${user.totalSpentWhopBeforeFees.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span>
-                        <span className="ml-1 text-[8px] uppercase tracking-tighter">Before Fee</span>
-                      </span>
-                    )}
+                </th>
+                <th 
+                  className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right cursor-pointer hover:text-gray-600 transition-colors"
+                  onClick={() => handleSort('totalSpentSheet')}
+                >
+                  <div className="flex items-center justify-end">
+                    Sheet Revenue <SortIcon field="totalSpentSheet" />
                   </div>
-                </td>
-                <td className="px-8 py-5 text-right font-bold text-gray-600">
-                  ${user.totalSpentSheet.toLocaleString(undefined, { minimumFractionDigits: 2 })}
-                </td>
-                <td className="px-8 py-5">
-                  <p className="text-sm font-bold text-gray-700">
-                    {user.lastPaymentDate ? new Date(user.lastPaymentDate).toLocaleDateString() : 'N/A'}
-                  </p>
-                </td>
-                <td className="px-8 py-5">
-                  <button className="p-2 hover:bg-white rounded-xl transition-colors text-gray-400 hover:text-blue-600">
-                    <ExternalLink className="w-5 h-5" />
-                  </button>
-                </td>
+                </th>
+                <th 
+                  className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest cursor-pointer hover:text-gray-600 transition-colors"
+                  onClick={() => handleSort('lastPaymentDate')}
+                >
+                  <div className="flex items-center">
+                    Last Activity <SortIcon field="lastPaymentDate" />
+                  </div>
+                </th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Actions</th>
               </tr>
-            ))}
-          </tbody>
-        </table>
+            </thead>
+            <tbody className="divide-y divide-gray-50">
+              {sortedUsers.map((user) => {
+                const ghlData = user.ghlData || ghlDataMap[user.email];
+                const ghlContact = ghlData?.contact || (ghlData?.id ? ghlData : null);
+                const opportunities = ghlData?.opportunities || [];
+                const activeOpp = opportunities.find((o: any) => o.status === 'open') || opportunities[0];
+                const totalValue = opportunities.reduce((sum: number, opp: any) => sum + (Number(opp.monetaryValue) || 0), 0);
+                
+                return (
+                  <tr 
+                    key={user.email} 
+                    className="hover:bg-blue-50/30 transition-colors group cursor-pointer"
+                    onClick={() => {
+                      setSelectedUser(user);
+                      fetchGhlForUser(user.email);
+                    }}
+                  >
+                    <td className="px-6 py-5">
+                      <div className="flex items-center gap-3">
+                        <div className="w-8 h-8 bg-blue-100 rounded-lg flex items-center justify-center text-blue-600 font-bold text-xs">
+                          {user.name ? user.name.charAt(0) : '?'}
+                        </div>
+                        <p className="font-bold text-gray-900 group-hover:text-blue-600 transition-colors text-sm">{user.name || 'Unknown'}</p>
+                      </div>
+                    </td>
+                    <td className="px-6 py-5">
+                      <span className="text-xs font-bold text-gray-700">
+                        {ghlContact?.type || (ghlContact?.id ? 'Contact' : '-')}
+                      </span>
+                    </td>
+                    <td className="px-6 py-5">
+                      <p className="text-xs text-gray-500 font-medium">{user.email}</p>
+                    </td>
+                    <td className="px-6 py-5">
+                      {opportunities.length > 0 ? (
+                        <div className="flex flex-col">
+                          <span className="text-sm font-black text-gray-900">${totalValue.toLocaleString()}</span>
+                          <span className="text-[10px] text-gray-400 font-bold uppercase">{opportunities.length} Opps</span>
+                        </div>
+                      ) : <span className="text-sm text-gray-400">-</span>}
+                    </td>
+                    <td className="px-6 py-5">
+                      {activeOpp ? (
+                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${
+                          activeOpp.status === 'open' ? 'bg-blue-100 text-blue-700' : 
+                          activeOpp.status === 'won' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
+                        }`}>
+                          {activeOpp.status}
+                        </span>
+                      ) : <span className="text-xs text-gray-400">-</span>}
+                    </td>
+                    <td className="px-6 py-5">
+                      <div className="flex flex-wrap gap-1">
+                        {user.source.includes('Whop') && (
+                          <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[8px] font-black uppercase">Whop</span>
+                        )}
+                        {user.source.includes('Sheet') && (
+                          <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[8px] font-black uppercase">Sheet</span>
+                        )}
+                        {(user.source.includes('GHL') || ghlContact?.id) && (
+                          <span className="px-1.5 py-0.5 bg-orange-50 text-orange-600 rounded text-[8px] font-black uppercase">GHL</span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-5">
+                      <span className="text-xs font-bold text-blue-600">
+                        {user.ghlStageName && user.ghlStageName !== 'Unknown' ? user.ghlStageName : (activeOpp ? getGhlStageName(ghlData, activeOpp.pipelineId, activeOpp.pipelineStageId) : '-')}
+                      </span>
+                    </td>
+                    <td className="px-6 py-5">
+                      <span className="text-xs font-medium text-gray-700">
+                        {user.ghlPipelineName && user.ghlPipelineName !== 'Unknown' ? user.ghlPipelineName : (activeOpp ? (ghlData?.pipelines?.find((p: any) => p.id === activeOpp.pipelineId)?.name || 'Unknown') : '-')}
+                      </span>
+                    </td>
+                    <td className="px-6 py-5">
+                      {(() => {
+                        const assignedToName = user.ghlAssignedToName;
+                        if (assignedToName && assignedToName !== 'Unknown') return <span className="text-xs font-bold text-gray-700">{assignedToName}</span>;
+                        
+                        const assignedToId = activeOpp?.assignedTo || ghlContact?.assignedTo;
+                        const assignedUser = ghlData?.ghlUsers?.find((u: any) => u.id === assignedToId);
+                        if (!assignedToId) return <span className="text-xs text-gray-400 italic">Unassigned</span>;
+                        return <span className="text-xs font-bold text-gray-700">{assignedUser ? (assignedUser.name || `${assignedUser.firstName} ${assignedUser.lastName}`) : 'Unknown'}</span>;
+                      })()}
+                    </td>
+                    <td className="px-6 py-5">
+                      <span className="text-[10px] text-gray-400 font-medium">
+                        {ghlContact?.dateAdded ? new Date(ghlContact.dateAdded).toLocaleDateString() : '-'}
+                      </span>
+                    </td>
+                    <td className="px-6 py-5">
+                      <div className="flex flex-wrap gap-1 max-w-[120px]">
+                        {(ghlContact?.tags || []).slice(0, 2).map((tag: string, i: number) => (
+                          <span key={i} className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[8px] font-bold uppercase">{tag}</span>
+                        ))}
+                      </div>
+                    </td>
+                    <td className="px-6 py-5 text-right">
+                      <div className="flex flex-col items-end">
+                        <span className="text-sm font-bold text-gray-900">
+                          ${user.totalSpentWhop.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </span>
+                      </div>
+                    </td>
+                    <td className="px-6 py-5 text-right font-bold text-gray-600">
+                      ${user.totalSpentSheet.toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                    </td>
+                    <td className="px-6 py-5">
+                      <p className="text-xs font-bold text-gray-700">
+                        {user.lastPaymentDate ? new Date(user.lastPaymentDate).toLocaleDateString() : 'N/A'}
+                      </p>
+                    </td>
+                    <td className="px-6 py-5">
+                      <button className="p-1.5 hover:bg-white rounded-lg transition-colors text-gray-400 hover:text-blue-600">
+                        <ExternalLink className="w-4 h-4" />
+                      </button>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       </div>
 
       {selectedUser && (
-        <UnifiedUserModal 
-          user={selectedUser} 
-          onClose={() => setSelectedUser(null)} 
+        <UnifiedUserModal
+          user={{
+            ...selectedUser,
+            ghlData: ghlDataMap[selectedUser.email]
+          }}
+          onClose={() => setSelectedUser(null)}
         />
       )}
     </div>

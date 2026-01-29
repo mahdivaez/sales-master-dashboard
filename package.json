@@ -9,6 +9,7 @@
     "lint": "eslint"
   },
   "dependencies": {
+    "@gohighlevel/api-client": "^2.2.2",
     "date-fns": "^4.1.0",
     "googleapis": "^170.1.0",
     "lucide-react": "^0.460.0",
