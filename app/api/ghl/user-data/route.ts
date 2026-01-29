@@ -4,12 +4,13 @@ import { searchContactByEmail, fetchGhlData } from '@/lib/ghl-client';
 export async function GET(request: NextRequest) {
   const searchParams = request.nextUrl.searchParams;
   const email = searchParams.get('email');
-  let locationId = searchParams.get('locationId');
-  let accessToken = request.headers.get('Authorization')?.split(' ')[1];
+  const locationIdParam = searchParams.get('locationId');
+  const authHeader = request.headers.get('Authorization');
+  const accessTokenParam = authHeader?.split(' ')[1];
 
   // Fallback to environment variables if not provided in request
-  if (!locationId) locationId = process.env.LOCATION_ID || undefined;
-  if (!accessToken) accessToken = process.env.GHL_ACCESS_TOKEN || undefined;
+  const locationId = locationIdParam || process.env.LOCATION_ID || '';
+  const accessToken = accessTokenParam || process.env.GHL_ACCESS_TOKEN || '';
 
   if (!email || !locationId || !accessToken) {
     console.error('Missing GHL parameters:', { email: !!email, locationId: !!locationId, accessToken: !!accessToken });
