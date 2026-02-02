@@ -6,9 +6,10 @@ import Papa from 'papaparse';
 
 interface ElectiveUploadProps {
   onDataLoaded: (data: any[]) => void;
+  companyName?: string;
 }
 
-export const ElectiveUpload: React.FC<ElectiveUploadProps> = ({ onDataLoaded }) => {
+export const ElectiveUpload: React.FC<ElectiveUploadProps> = ({ onDataLoaded, companyName }) => {
   const [fileName, setFileName] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -50,6 +51,7 @@ export const ElectiveUpload: React.FC<ElectiveUploadProps> = ({ onDataLoaded }) 
           netAmount: parseFloat(row['Net Amount']?.replace(/[^0-9.-]+/g, '')) || 0,
           status: row['Status'],
           orderTotal: parseFloat(row['Order Total']?.replace(/[^0-9.-]+/g, '')) || 0,
+          companyName: companyName // Tag data with company name
         })).filter(item => item.customerEmail);
 
         onDataLoaded(mappedData);
@@ -73,7 +75,7 @@ export const ElectiveUpload: React.FC<ElectiveUploadProps> = ({ onDataLoaded }) 
         <div>
           <h3 className="text-lg font-black text-gray-900 flex items-center gap-2">
             <Upload className="w-5 h-5 text-blue-600" />
-            Upload Elective CSV
+            Upload Elective CSV {companyName ? `for ${companyName}` : ''}
           </h3>
           <p className="text-xs text-gray-500 font-medium">Merge Elective sales data with existing records</p>
         </div>

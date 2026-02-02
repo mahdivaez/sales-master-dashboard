@@ -263,9 +263,9 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                     </td>
                     <td className="px-6 py-5">
                       <div className="flex flex-wrap gap-1">
-                        {user.source.includes('Whop') && (
-                          <span className="px-1.5 py-0.5 bg-indigo-50 text-indigo-600 rounded text-[8px] font-black uppercase">Whop</span>
-                        )}
+                        {user.companies?.map((company: string) => (
+                          <span key={company} className="px-1.5 py-0.5 bg-blue-50 text-blue-600 rounded text-[8px] font-black uppercase">{company}</span>
+                        ))}
                         {user.source.includes('Sheet') && (
                           <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[8px] font-black uppercase">Sheet</span>
                         )}

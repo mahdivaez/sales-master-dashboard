@@ -1,13 +1,14 @@
 import { WhopPayment, WhopMember, WhopMembership } from '@/types';
+import { COMPANIES } from '@/lib/config';
 
 const DEFAULT_WHOP_API_KEY = process.env.WHOP_API_KEY;
 const DEFAULT_COMPANY_ID = process.env.COMPANY_ID || 'biz_gwvX72rmmUEqwj';
 const BASE_URL = 'https://api.whop.com/v1';
 
-const COMPANY_API_KEYS: Record<string, string | undefined> = {
-  'biz_gwvX72rmmUEqwj': process.env.WHOP_API_KEY,
-  'biz_qcxyUyVWg1WZ7P': 'apik_tPkzrs0suoSpQ_C3145112_C_d659a7bf788d9a54d1785921858bdb10ca5c784a6796e4ec4c10c6fd82d68c'
-};
+const COMPANY_API_KEYS: Record<string, string | undefined> = {};
+COMPANIES.forEach(c => {
+  COMPANY_API_KEYS[c.whopCompanyId] = c.whopApiKey;
+});
 
 async function delay(ms: number) {
   return new Promise(resolve => setTimeout(resolve, ms));

@@ -7,6 +7,7 @@ import path from 'path';
 import { cache } from 'react';
 import { getMembers, getPayments, getMemberships, getAllUniqueUsers, getUser } from '@/lib/whop/fetchers';
 import { WhopMember, WhopPayment, WhopMembership } from '@/types';
+import { COMPANIES, CompanyConfig } from '@/lib/config';
 
 // Configuration Constants
 const CONFIG = {
@@ -101,12 +102,16 @@ export async function getUnifiedUserData(options: {
   ghlToken?: string;
   ghlLocationId?: string;
   electiveData?: any[];
+  companyId?: string; // New option to filter by company
 } = {}) {
-  const { limit = 50, offset = 0, search = '', startDate, endDate, electiveData = [] } = options;
+  const { limit = 50, offset = 0, search = '', startDate, endDate, electiveData = [], companyId } = options;
   
-  // Use provided tokens or fallback to environment variables
-  const ghlToken = options.ghlToken || process.env.GHL_ACCESS_TOKEN;
-  const ghlLocationId = options.ghlLocationId || process.env.GHL_LOCATION_ID || process.env.LOCATION_ID;
+  // Find the specific company config if companyId is provided
+  const selectedCompany = companyId ? COMPANIES.find(c => c.id === companyId) : null;
+
+  // Use provided tokens or fallback to company config or environment variables
+  const ghlToken = options.ghlToken || selectedCompany?.ghlAccessToken || process.env.GHL_ACCESS_TOKEN;
+  const ghlLocationId = options.ghlLocationId || selectedCompany?.ghlLocationId || process.env.GHL_LOCATION_ID || process.env.LOCATION_ID;
 
   console.log('GHL Config Check:', { 
     hasToken: !!ghlToken, 
@@ -115,19 +120,17 @@ export async function getUnifiedUserData(options: {
   });
 
   // Initialize variables at the top level so they're accessible in the catch block
-  let members2: WhopMember[] = [];
-  let payments2: WhopPayment[] = [];
-  let memberships2: WhopMembership[] = [];
+  let allMembers: WhopMember[] = [];
+  let allPayments: WhopPayment[] = [];
+  let allMemberships: WhopMembership[] = [];
   let sheetData: any[] = [];
   let pipelineData: any[] = [];
-  let additionalUserData: Record<string, any> = {};
   
   try {
-    const COMPANY_2_ID = 'biz_qcxyUyVWg1WZ7P';
     console.log('Starting unified data fetch process with options:', options);
 
-    // 1. Fetch Whop Data for Company 2 only
-    console.log('Fetching Whop data for company ID:', COMPANY_2_ID);
+    // 1. Fetch Whop Data for all companies or selected company
+    const companiesToFetch = selectedCompany ? [selectedCompany] : COMPANIES;
     
     // Global tracking for duplicate detection
     const globalTracking = {
@@ -136,74 +139,93 @@ export async function getUnifiedUserData(options: {
       membershipIds: new Set<string>()
     };
 
-    const whopResults = await Promise.allSettled([
-      getMembers(COMPANY_2_ID, undefined, globalTracking.memberIds),
-      getPayments(COMPANY_2_ID, undefined, globalTracking.paymentIds),
-      getMemberships(COMPANY_2_ID, undefined, globalTracking.membershipIds)
-    ]);
+    for (const company of companiesToFetch) {
+      console.log(`Fetching Whop data for company: ${company.name} (${company.whopCompanyId})`);
+      
+      const whopResults = await Promise.allSettled([
+        getMembers(company.whopCompanyId, undefined, globalTracking.memberIds),
+        getPayments(company.whopCompanyId, undefined, globalTracking.paymentIds),
+        getMemberships(company.whopCompanyId, undefined, globalTracking.membershipIds)
+      ]);
 
-    members2 = whopResults[0].status === 'fulfilled' ? whopResults[0].value as WhopMember[] : [];
-    payments2 = whopResults[1].status === 'fulfilled' ? whopResults[1].value as WhopPayment[] : [];
-    memberships2 = whopResults[2].status === 'fulfilled' ? whopResults[2].value as WhopMembership[] : [];
+      const members = whopResults[0].status === 'fulfilled' ? whopResults[0].value as WhopMember[] : [];
+      const payments = whopResults[1].status === 'fulfilled' ? whopResults[1].value as WhopPayment[] : [];
+      const memberships = whopResults[2].status === 'fulfilled' ? whopResults[2].value as WhopMembership[] : [];
 
-    if (whopResults.some(r => r.status === 'rejected')) {
-      console.warn('Some Whop data fetches failed:', whopResults.filter(r => r.status === 'rejected'));
+      // Add company info to each item
+      members.forEach(m => (m as any).companyName = company.name);
+      payments.forEach(p => (p as any).companyName = company.name);
+      memberships.forEach(m => (m as any).companyName = company.name);
+
+      allMembers = [...allMembers, ...members];
+      allPayments = [...allPayments, ...payments];
+      allMemberships = [...allMemberships, ...memberships];
+
+      if (whopResults.some(r => r.status === 'rejected')) {
+        console.warn(`Some Whop data fetches failed for ${company.name}:`, whopResults.filter(r => r.status === 'rejected'));
+      }
     }
 
     // Optimization: Filter Whop data by search term if provided
     if (search) {
       const searchLower = search.toLowerCase();
-      members2 = members2.filter(m => 
+      allMembers = allMembers.filter(m => 
         (m.user?.email?.toLowerCase().includes(searchLower)) ||
         (m.user?.name?.toLowerCase().includes(searchLower)) ||
         (m.user?.username?.toLowerCase().includes(searchLower))
       );
-      payments2 = payments2.filter(p => 
+      allPayments = allPayments.filter(p => 
         (p.user?.email?.toLowerCase().includes(searchLower)) ||
         (p.user?.name?.toLowerCase().includes(searchLower)) ||
         (p.user?.username?.toLowerCase().includes(searchLower))
       );
-      memberships2 = memberships2.filter(m => 
+      allMemberships = allMemberships.filter(m => 
         (m.user?.email?.toLowerCase().includes(searchLower)) ||
         (m.user?.name?.toLowerCase().includes(searchLower)) ||
         (m.user?.username?.toLowerCase().includes(searchLower))
       );
     }
     
-    console.log(`Initial data fetch complete: ${members2.length} members, ${payments2.length} payments, ${memberships2.length} memberships`);
+    console.log(`Initial data fetch complete: ${allMembers.length} members, ${allPayments.length} payments, ${allMemberships.length} memberships`);
 
-    // 1.1 Fetch additional user data - DEFERRED until after initial merge and pagination
-    // We will only fetch additional data for users on the current page to save hundreds of API calls.
-
-    // 2. Fetch Sheet Data
+    // 2. Fetch Sheet Data for all companies or selected company
     console.log('Fetching sheet and pipeline data...');
     
-    const sheetCacheKey = 'google_sheet_data';
-    const pipelineCacheKey = 'google_pipeline_data';
-    
-    sheetData = getCachedData(sheetCacheKey) || [];
-    pipelineData = getCachedData(pipelineCacheKey) || [];
-    
-    if (sheetData.length === 0 || pipelineData.length === 0) {
-      const results = await Promise.allSettled([
-        sheetData.length === 0 ? getCashCollectedData() : Promise.resolve({ success: true, data: sheetData }),
-        pipelineData.length === 0 ? getPipelineStageData() : Promise.resolve({ success: true, data: pipelineData })
-      ]);
+    for (const company of companiesToFetch) {
+      const sheetCacheKey = `google_sheet_data_${company.id}`;
+      const pipelineCacheKey = `google_pipeline_data_${company.id}`;
       
-      if (results[0].status === 'fulfilled') {
-        const res = results[0].value as any;
-        if (res.success) {
-          sheetData = res.data;
-          setCachedData(sheetCacheKey, sheetData);
+      let companySheetData = getCachedData(sheetCacheKey) || [];
+      let companyPipelineData = getCachedData(pipelineCacheKey) || [];
+      
+      if (companySheetData.length === 0 || companyPipelineData.length === 0) {
+        const results = await Promise.allSettled([
+          companySheetData.length === 0 ? getCashCollectedData(company.googleSheetCashCollectedUrl) : Promise.resolve({ success: true, data: companySheetData }),
+          companyPipelineData.length === 0 ? getPipelineStageData(company.googleSheetPipelineUrl) : Promise.resolve({ success: true, data: companyPipelineData })
+        ]);
+        
+        if (results[0].status === 'fulfilled') {
+          const res = results[0].value as any;
+          if (res.success) {
+            companySheetData = res.data;
+            setCachedData(sheetCacheKey, companySheetData);
+          }
+        }
+        if (results[1].status === 'fulfilled') {
+          const res = results[1].value as any;
+          if (res.success) {
+            companyPipelineData = res.data;
+            setCachedData(pipelineCacheKey, companyPipelineData);
+          }
         }
       }
-      if (results[1].status === 'fulfilled') {
-        const res = results[1].value as any;
-        if (res.success) {
-          pipelineData = res.data;
-          setCachedData(pipelineCacheKey, pipelineData);
-        }
-      }
+      
+      // Add company info
+      companySheetData.forEach((d: any) => d.companyName = company.name);
+      companyPipelineData.forEach((d: any) => d.companyName = company.name);
+
+      sheetData = [...sheetData, ...companySheetData];
+      pipelineData = [...pipelineData, ...companyPipelineData];
     }
     
     console.log(`Sheet data fetch complete: ${sheetData?.length || 0} sheet records, ${pipelineData?.length || 0} pipeline records`);
@@ -212,87 +234,20 @@ export async function getUnifiedUserData(options: {
     console.log('Beginning data merging process...');
     const unifiedData: Record<string, any> = {};
     
-    // Global tracking for duplicate detection
-    const tracking = {
-      memberIds: new Set<string>(),
-      paymentIds: new Set<string>(),
-      membershipIds: new Set<string>()
-    };
-
     // Helper to process Whop data
     const processWhopData = (
       members: WhopMember[],
       payments: WhopPayment[],
-      memberships: WhopMembership[],
-      companyLabel: string,
-      additionalUserData: Record<string, any> = {}
+      memberships: WhopMembership[]
     ) => {
-      console.log(`Processing ${members.length} members for ${companyLabel}`);
-      members.forEach((member: WhopMember) => {
-        const userObj = member.user || (member as any).user_data;
-        if (!userObj || !userObj.email || tracking.memberIds.has(member.id)) return;
-        tracking.memberIds.add(member.id);
-        
-        const email = userObj.email.toLowerCase().trim();
-        const userId = userObj.id;
-        
-        // Try to get enhanced user data if available
-        const enhancedUserData = userId && additionalUserData[userId] ? additionalUserData[userId] : null;
-        
-        // Use enhanced data if available, otherwise use member data
-        const name = enhancedUserData?.name ||
-                    (userObj.name && userObj.name !== 'Unknown' ? userObj.name : '');
-        const username = enhancedUserData?.username || userObj.username || '';
-
-        if (!unifiedData[email]) {
-          unifiedData[email] = {
-            email,
-            name: name || username || 'Unknown',
-            username: username,
-            whopId: userId,
-            whopData: {
-              member,
-              payments: [],
-              memberships: [],
-              enhancedUserData: enhancedUserData
-            },
-            sheetData: [],
-            totalSpentWhop: 0, // Will be calculated from payments
-            totalSpentWhopBeforeFees: 0,
-            totalSpentSheet: 0,
-            lastPaymentDate: null,
-            source: [companyLabel]
-          };
-        } else {
-          if (!unifiedData[email].source.includes(companyLabel)) {
-            unifiedData[email].source.push(companyLabel);
-          }
-          if (!unifiedData[email].whopData.member) {
-            unifiedData[email].whopData.member = member;
-            unifiedData[email].whopId = userObj.id;
-            if (name) unifiedData[email].name = name;
-            unifiedData[email].username = userObj.username;
-          }
-        }
-      });
-
-      console.log(`Processing ${payments.length} payments for ${companyLabel}`);
+      // 1. Process payments first (Strongest indicator of activity)
       payments.forEach((payment: WhopPayment) => {
         const userObj = payment.user || (payment as any).user_data;
-        if (!userObj || !userObj.email || tracking.paymentIds.has(payment.id)) return;
-        tracking.paymentIds.add(payment.id);
+        if (!userObj || !userObj.email) return;
         
         const email = userObj.email.toLowerCase().trim();
         const userId = userObj.id;
-        
-        // Try to get enhanced user data if available
-        const enhancedUserData = userId && additionalUserData[userId] ? additionalUserData[userId] : null;
-        
-        // Use enhanced data if available, otherwise use payment data
-        const name = enhancedUserData?.name ||
-                    (userObj.name && userObj.name !== 'Unknown' ? userObj.name : '');
-        const username = enhancedUserData?.username || userObj.username || '';
-        
+        const companyLabel = (payment as any).companyName || 'Whop';
         const paymentDate = payment.created_at ? new Date(payment.created_at).getTime() : 0;
 
         if (!unifiedData[email]) {
@@ -301,28 +256,24 @@ export async function getUnifiedUserData(options: {
           const refunded = payment.refunded_amount || 0;
           unifiedData[email] = {
             email,
-            name: name || username || 'Unknown',
-            username: username,
+            name: (userObj.name && userObj.name !== 'Unknown' ? userObj.name : '') || userObj.username || 'Unknown',
+            username: userObj.username || '',
             whopId: userId || '',
             whopData: {
               member: null,
               payments: [payment],
               memberships: [],
-              enhancedUserData: enhancedUserData
+              enhancedUserData: null
             },
             sheetData: [],
             totalSpentWhop: (payment.substatus === 'succeeded' || payment.substatus === 'resolution_won') ? Math.max(0, amount - refunded) : 0,
             totalSpentWhopBeforeFees: (payment.substatus === 'succeeded' || payment.substatus === 'resolution_won') ? Math.max(0, amountBefore - refunded) : 0,
             totalSpentSheet: 0,
             lastPaymentDate: paymentDate,
-            source: [companyLabel]
+            source: [companyLabel],
+            companies: [companyLabel]
           };
         } else {
-          if (!unifiedData[email].source.includes(companyLabel)) {
-            unifiedData[email].source.push(companyLabel);
-          }
-          
-          // Double check for duplicate payment in the user's array
           const paymentExists = unifiedData[email].whopData.payments.some((p: any) => p.id === payment.id);
           if (!paymentExists) {
             unifiedData[email].whopData.payments.push(payment);
@@ -332,81 +283,120 @@ export async function getUnifiedUserData(options: {
               const refunded = payment.refunded_amount || 0;
               unifiedData[email].totalSpentWhop += Math.max(0, amount - refunded);
               unifiedData[email].totalSpentWhopBeforeFees += Math.max(0, amountBefore - refunded);
+              
+              // Only add company if there's a successful payment
+              if (!unifiedData[email].source.includes(companyLabel)) {
+                unifiedData[email].source.push(companyLabel);
+              }
+              if (!unifiedData[email].companies) unifiedData[email].companies = [];
+              if (!unifiedData[email].companies.includes(companyLabel)) {
+                unifiedData[email].companies.push(companyLabel);
+              }
             }
           }
           
-          if (name && (!unifiedData[email].name || unifiedData[email].name === 'Unknown')) {
-            unifiedData[email].name = name;
-          }
           if (!unifiedData[email].lastPaymentDate || paymentDate > unifiedData[email].lastPaymentDate) {
             unifiedData[email].lastPaymentDate = paymentDate;
           }
         }
       });
 
-      console.log(`Processing ${memberships.length} memberships for ${companyLabel}`);
+      // 2. Process memberships (Indicator of active subscription)
       memberships.forEach((membership: WhopMembership) => {
         const userObj = membership.user || (membership as any).user_data;
-        if (!userObj || !userObj.email || tracking.membershipIds.has(membership.id)) return;
-        tracking.membershipIds.add(membership.id);
+        if (!userObj || !userObj.email) return;
         
         const email = userObj.email.toLowerCase().trim();
         const userId = userObj.id;
-        
-        // Try to get enhanced user data if available
-        const enhancedUserData = userId && additionalUserData[userId] ? additionalUserData[userId] : null;
-        
-        // Use enhanced data if available, otherwise use membership data
-        const name = enhancedUserData?.name ||
-                    (userObj.name && userObj.name !== 'Unknown' ? userObj.name : '');
-        const username = enhancedUserData?.username || userObj.username || '';
+        const companyLabel = (membership as any).companyName || 'Whop';
         
         if (!unifiedData[email]) {
           unifiedData[email] = {
             email,
-            name: name || username || 'Unknown',
-            username: username,
+            name: (userObj.name && userObj.name !== 'Unknown' ? userObj.name : '') || userObj.username || 'Unknown',
+            username: userObj.username || '',
             whopId: userId || '',
             whopData: {
               member: null,
               payments: [],
               memberships: [membership],
-              enhancedUserData: enhancedUserData
+              enhancedUserData: null
             },
             sheetData: [],
             totalSpentWhop: 0,
             totalSpentWhopBeforeFees: 0,
             totalSpentSheet: 0,
             lastPaymentDate: null,
-            source: [companyLabel]
+            source: [companyLabel],
+            companies: [companyLabel]
           };
         } else {
-          if (!unifiedData[email].source.includes(companyLabel)) {
-            unifiedData[email].source.push(companyLabel);
-          }
-          
-          // Double check for duplicate membership in the user's array
           const membershipExists = unifiedData[email].whopData.memberships.some((m: any) => m.id === membership.id);
           if (!membershipExists) {
             unifiedData[email].whopData.memberships.push(membership);
+            // Only add company if they have an active/valid membership
+            if (membership.status === 'active' || membership.status === 'completed') {
+              if (!unifiedData[email].source.includes(companyLabel)) {
+                unifiedData[email].source.push(companyLabel);
+              }
+              if (!unifiedData[email].companies) unifiedData[email].companies = [];
+              if (!unifiedData[email].companies.includes(companyLabel)) {
+                unifiedData[email].companies.push(companyLabel);
+              }
+            }
           }
-          
-          if (name && (!unifiedData[email].name || unifiedData[email].name === 'Unknown')) {
-            unifiedData[email].name = name;
+        }
+      });
+
+      // 3. Process members (Only as fallback if no payments/memberships)
+      members.forEach((member: WhopMember) => {
+        const userObj = member.user || (member as any).user_data;
+        if (!userObj || !userObj.email) return;
+        
+        const email = userObj.email.toLowerCase().trim();
+        const userId = userObj.id;
+        const companyLabel = (member as any).companyName || 'Whop';
+
+        if (!unifiedData[email]) {
+          unifiedData[email] = {
+            email,
+            name: (userObj.name && userObj.name !== 'Unknown' ? userObj.name : '') || userObj.username || 'Unknown',
+            username: userObj.username || '',
+            whopId: userId,
+            whopData: {
+              member,
+              payments: [],
+              memberships: [],
+              enhancedUserData: null
+            },
+            sheetData: [],
+            totalSpentWhop: 0,
+            totalSpentWhopBeforeFees: 0,
+            totalSpentSheet: 0,
+            lastPaymentDate: null,
+            source: [companyLabel],
+            companies: [companyLabel]
+          };
+        } else {
+          if (!unifiedData[email].whopData.member) {
+            unifiedData[email].whopData.member = member;
+            unifiedData[email].whopId = userObj.id;
           }
+          // We DON'T automatically add the company label here if they already exist
+          // because they might just be a "ghost" member without real activity in this company
         }
       });
     };
 
-    // Process only Company 2
-    processWhopData(members2, payments2, memberships2, 'Whop', {});
+    processWhopData(allMembers, allPayments, allMemberships);
 
     // 4. Ensure all members are included even if they have no payments/memberships in the fetched lists
-    members2.forEach((member: WhopMember) => {
+    allMembers.forEach((member: WhopMember) => {
       const userObj = member.user || (member as any).user_data;
       if (!userObj || !userObj.email) return;
       const email = userObj.email.toLowerCase().trim();
       const userId = userObj.id;
+      const companyLabel = (member as any).companyName || 'Whop';
       
       if (!unifiedData[email]) {
         const name = (userObj.name && userObj.name !== 'Unknown' ? userObj.name : '');
@@ -428,7 +418,8 @@ export async function getUnifiedUserData(options: {
           totalSpentWhopBeforeFees: 0,
           totalSpentSheet: 0,
           lastPaymentDate: null,
-          source: ['Whop']
+          source: [companyLabel],
+          companies: [companyLabel]
         };
       }
     });
@@ -479,6 +470,7 @@ export async function getUnifiedUserData(options: {
       if (!email) return;
 
       const name = (row.contactName || row.bookingName || '').trim();
+      const companyLabel = row.companyName || 'Sheet';
 
       let sheetDate = 0;
       if (row.date) {
@@ -499,8 +491,14 @@ export async function getUnifiedUserData(options: {
         unifiedData[email].sheetData.push(row);
         const amount = parseFloat(row.amount.replace(/[^0-9.-]+/g, '')) || 0;
         unifiedData[email].totalSpentSheet += amount;
-        if (!unifiedData[email].source.includes('Sheet')) {
-          unifiedData[email].source.push('Sheet');
+        if (!unifiedData[email].source.includes(companyLabel)) {
+          unifiedData[email].source.push(companyLabel);
+        }
+        if (!unifiedData[email].companies) {
+          unifiedData[email].companies = [];
+        }
+        if (!unifiedData[email].companies.includes(companyLabel)) {
+          unifiedData[email].companies.push(companyLabel);
         }
         if (!unifiedData[email].lastPaymentDate || sheetDate > unifiedData[email].lastPaymentDate) {
           unifiedData[email].lastPaymentDate = sheetDate;
@@ -527,7 +525,8 @@ export async function getUnifiedUserData(options: {
           totalSpentWhopBeforeFees: 0,
           totalSpentSheet: amount,
           lastPaymentDate: sheetDate,
-          source: ['Sheet']
+          source: [companyLabel],
+          companies: [companyLabel]
         };
       }
     });
@@ -577,6 +576,7 @@ export async function getUnifiedUserData(options: {
       if (!email) return;
 
       const name = (row.name || '').trim();
+      const companyLabel = row.companyName || 'Pipeline';
 
       if (unifiedData[email]) {
         // Merge pipeline data into existing user
@@ -584,8 +584,14 @@ export async function getUnifiedUserData(options: {
           unifiedData[email].pipelineData = [];
         }
         unifiedData[email].pipelineData.push(row);
-        if (!unifiedData[email].source.includes('Pipeline')) {
-          unifiedData[email].source.push('Pipeline');
+        if (!unifiedData[email].source.includes(companyLabel)) {
+          unifiedData[email].source.push(companyLabel);
+        }
+        if (!unifiedData[email].companies) {
+          unifiedData[email].companies = [];
+        }
+        if (!unifiedData[email].companies.includes(companyLabel)) {
+          unifiedData[email].companies.push(companyLabel);
         }
         // If the user has no name or is 'Unknown', use the pipeline name
         if (name && (!unifiedData[email].name || unifiedData[email].name === 'Unknown')) {
@@ -608,7 +614,8 @@ export async function getUnifiedUserData(options: {
           totalSpentWhop: 0,
           totalSpentWhopBeforeFees: 0,
           totalSpentSheet: 0,
-          source: ['Pipeline']
+          source: [companyLabel],
+          companies: [companyLabel]
         };
       }
     });
@@ -631,8 +638,15 @@ export async function getUnifiedUserData(options: {
           unifiedData[email].electiveData.push(row);
           unifiedData[email].totalSpentElective = (unifiedData[email].totalSpentElective || 0) + amount;
           
-          if (!unifiedData[email].source.includes('Elective')) {
-            unifiedData[email].source.push('Elective');
+          const companyLabel = row.companyName || 'Elective';
+          if (!unifiedData[email].source.includes(companyLabel)) {
+            unifiedData[email].source.push(companyLabel);
+          }
+          if (!unifiedData[email].companies) {
+            unifiedData[email].companies = [];
+          }
+          if (!unifiedData[email].companies.includes(companyLabel)) {
+            unifiedData[email].companies.push(companyLabel);
           }
           
           if (!unifiedData[email].lastPaymentDate || saleDate > unifiedData[email].lastPaymentDate) {
@@ -643,6 +657,7 @@ export async function getUnifiedUserData(options: {
             unifiedData[email].name = name;
           }
         } else {
+          const companyLabel = row.companyName || 'Elective';
           unifiedData[email] = {
             email,
             name: name || 'Unknown',
@@ -661,7 +676,8 @@ export async function getUnifiedUserData(options: {
             totalSpentSheet: 0,
             totalSpentElective: amount,
             lastPaymentDate: saleDate,
-            source: ['Elective']
+            source: [companyLabel],
+            companies: [companyLabel]
           };
         }
       });
@@ -707,11 +723,17 @@ export async function getUnifiedUserData(options: {
 
     if (usersNeedingData.length > 0) {
       console.log(`Lazy loading additional Whop data for ${usersNeedingData.length} users on current page...`);
+      
+      // We need to know which company each user belongs to for the correct API key
+      // For simplicity, we'll use the first company's ID if not clear, 
+      // but ideally we'd fetch per company.
+      const firstCompanyId = companiesToFetch[0].whopCompanyId;
+
       const lazyUserData = await getAllUniqueUsers(
         [], // No payments needed, we already have the IDs
         [], // No memberships needed
         [], // No members needed
-        COMPANY_2_ID,
+        firstCompanyId,
         usersNeedingData.map(u => u.whopId) // Pass explicit IDs to fetch
       );
 
@@ -731,94 +753,137 @@ export async function getUnifiedUserData(options: {
     }
 
     // 6. Fetch GHL data for the paginated results only (Efficient approach)
-    if (ghlToken && ghlLocationId && paginatedData.length > 0) {
-      const ghlMetadata = await getGHLMetadata(ghlToken, ghlLocationId);
-      const { customFields, users: ghlUsers, pipelines } = ghlMetadata;
-
+    if (paginatedData.length > 0) {
+      console.log(`Fetching GHL data for ${paginatedData.length} users...`);
+      
       // Parallelize GHL fetches for the entire page with concurrency control
       const CONCURRENCY_LIMIT = CONFIG.GHL_BATCH_SIZE;
       const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+      // Pre-fetch metadata for all relevant companies to avoid redundant calls
+      const uniqueCompanyNames = Array.from(new Set(paginatedData.flatMap(u => u.companies || [])));
+      const companyConfigsToFetch = COMPANIES.filter(c => uniqueCompanyNames.includes(c.name) || (selectedCompany && c.id === selectedCompany.id));
+      
+      const metadataMap: Record<string, any> = {};
+      await Promise.all(companyConfigsToFetch.map(async (config) => {
+        if (config.ghlAccessToken && config.ghlLocationId) {
+          try {
+            metadataMap[config.id] = await getGHLMetadata(config.ghlAccessToken, config.ghlLocationId);
+          } catch (err) {
+            console.error(`Failed to pre-fetch GHL metadata for ${config.name}:`, err);
+          }
+        }
+      }));
 
       for (let i = 0; i < paginatedData.length; i += CONCURRENCY_LIMIT) {
         const batch = paginatedData.slice(i, i + CONCURRENCY_LIMIT);
         await Promise.all(batch.map(async (user: any) => {
           try {
-            // Try searching by email specifically using the contacts search endpoint with filters
-            const response = await fetch(`https://services.leadconnectorhq.com/contacts/search`, {
-              method: 'POST',
-              headers: {
-                'Authorization': `Bearer ${ghlToken}`,
-                'Version': '2021-07-28',
-                'Accept': 'application/json',
-                'Content-Type': 'application/json',
-                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-              },
-              body: JSON.stringify({
-                locationId: ghlLocationId,
-                pageLimit: 1,
-                filters: [
-                  {
-                    field: 'email',
-                    operator: 'eq',
-                    value: user.email
-                  }
-                ]
-              })
-            });
+            // Determine which company this user belongs to
+            const userCompanyNames = user.companies || [];
+            const companyConfigs = COMPANIES.filter(c => userCompanyNames.includes(c.name));
             
-            if (response.ok) {
-              const data = await response.json();
-              const contact = data.contacts?.[0];
-              if (contact) {
-                // Fetch opportunities for this contact
-                const oppResponse = await fetch(`https://services.leadconnectorhq.com/opportunities/search?location_id=${ghlLocationId}&contact_id=${contact.id}`, {
-                  headers: {
-                    'Authorization': `Bearer ${ghlToken}`,
-                    'Version': '2021-07-28',
-                    'Accept': 'application/json',
-                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+            // If no company found (e.g. elective only), fallback to selected company or first company
+            const configsToTry = companyConfigs.length > 0 ? companyConfigs : (selectedCompany ? [selectedCompany] : [COMPANIES[0]]);
+
+            for (const config of configsToTry) {
+              const currentGhlToken = config.ghlAccessToken;
+              const currentGhlLocationId = config.ghlLocationId;
+
+              if (!currentGhlToken || !currentGhlLocationId) continue;
+
+              const ghlMetadata = metadataMap[config.id];
+              if (!ghlMetadata) continue;
+
+              const { customFields, users: ghlUsers, pipelines } = ghlMetadata;
+
+              console.log(`Searching GHL for ${user.email} in company ${config.name} (Location: ${currentGhlLocationId})`);
+
+              const response = await fetch(`https://services.leadconnectorhq.com/contacts/search`, {
+                method: 'POST',
+                headers: {
+                  'Authorization': `Bearer ${currentGhlToken}`,
+                  'Version': '2021-07-28',
+                  'Accept': 'application/json',
+                  'Content-Type': 'application/json',
+                  'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                },
+                body: JSON.stringify({
+                  locationId: currentGhlLocationId,
+                  pageLimit: 1,
+                  filters: [
+                    {
+                      field: 'email',
+                      operator: 'eq',
+                      value: user.email
+                    }
+                  ]
+                })
+              });
+              
+              if (response.ok) {
+                const data = await response.json();
+                const contact = data.contacts?.[0];
+                if (contact) {
+                  console.log(`GHL Contact found for ${user.email} in ${config.name}: ${contact.id}`);
+                  // Fetch opportunities for this contact
+                  const oppResponse = await fetch(`https://services.leadconnectorhq.com/opportunities/search?location_id=${currentGhlLocationId}&contact_id=${contact.id}`, {
+                    headers: {
+                      'Authorization': `Bearer ${currentGhlToken}`,
+                      'Version': '2021-07-28',
+                      'Accept': 'application/json',
+                      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    }
+                  });
+                  const oppData = oppResponse.ok ? await oppResponse.json() : { opportunities: [] };
+                  const opportunities = Array.isArray(oppData.opportunities) ? oppData.opportunities : [];
+
+                  user.ghlData = {
+                    contact,
+                    opportunities: opportunities,
+                    customFieldsSchema: customFields,
+                    ghlUsers: ghlUsers,
+                    pipelines: pipelines
+                  };
+
+                  // Add direct access to active opportunity data for easier UI rendering
+                  const activeOpp = opportunities.find((o: any) => o.status === 'open') || opportunities[0];
+                  
+                  if (activeOpp) {
+                    user.ghlActiveOpp = activeOpp;
+                    const pipeline = pipelines.find((p: any) => p.id === activeOpp.pipelineId);
+                    const stage = pipeline?.stages?.find((s: any) => s.id === activeOpp.pipelineStageId);
+                    
+                    user.ghlStageName = stage ? stage.name : 'Unknown';
+                    user.ghlPipelineName = pipeline ? pipeline.name : 'Unknown';
+                    
+                    const assignedToId = activeOpp.assignedTo || contact.assignedTo;
+                    const assignedUser = ghlUsers.find((u: any) => u.id === assignedToId);
+                    user.ghlAssignedToName = assignedUser ? (assignedUser.name || `${assignedUser.firstName} ${assignedUser.lastName}`) : 'Unknown';
+                  } else {
+                    user.ghlStageName = '-';
+                    user.ghlPipelineName = '-';
+                    const assignedToId = contact.assignedTo;
+                    const assignedUser = ghlUsers.find((u: any) => u.id === assignedToId);
+                    user.ghlAssignedToName = assignedUser ? (assignedUser.name || `${assignedUser.firstName} ${assignedUser.lastName}`) : 'Unassigned';
                   }
-                });
-                const oppData = oppResponse.ok ? await oppResponse.json() : { opportunities: [] };
-                const opportunities = Array.isArray(oppData.opportunities) ? oppData.opportunities : [];
 
-                user.ghlData = {
-                  contact,
-                  opportunities: opportunities,
-                  customFieldsSchema: customFields,
-                  ghlUsers: ghlUsers,
-                  pipelines: pipelines
-                };
-
-                // Add direct access to active opportunity data for easier UI rendering
-                const activeOpp = opportunities.find((o: any) => o.status === 'open') || opportunities[0];
-                
-                if (activeOpp) {
-                  user.ghlActiveOpp = activeOpp;
-                  const pipeline = pipelines.find((p: any) => p.id === activeOpp.pipelineId);
-                  const stage = pipeline?.stages?.find((s: any) => s.id === activeOpp.pipelineStageId);
+                  if (!user.source.includes('GHL')) {
+                    user.source.push('GHL');
+                  }
+                  const ghlName = `${contact.firstName || ''} ${contact.lastName || ''}`.trim();
+                  if (ghlName && (!user.name || user.name === 'Unknown')) {
+                    user.name = ghlName;
+                  }
                   
-                  user.ghlStageName = stage ? stage.name : 'Unknown';
-                  user.ghlPipelineName = pipeline ? pipeline.name : 'Unknown';
-                  
-                  const assignedToId = activeOpp.assignedTo || contact.assignedTo;
-                  const assignedUser = ghlUsers.find((u: any) => u.id === assignedToId);
-                  user.ghlAssignedToName = assignedUser ? (assignedUser.name || `${assignedUser.firstName} ${assignedUser.lastName}`) : 'Unknown';
+                  // Found the contact, no need to try other configs for this user
+                  break;
                 } else {
-                  user.ghlStageName = '-';
-                  user.ghlPipelineName = '-';
-                  const assignedToId = contact.assignedTo;
-                  const assignedUser = ghlUsers.find((u: any) => u.id === assignedToId);
-                  user.ghlAssignedToName = assignedUser ? (assignedUser.name || `${assignedUser.firstName} ${assignedUser.lastName}`) : 'Unassigned';
+                  console.log(`No GHL contact found for ${user.email} in ${config.name} (Location: ${currentGhlLocationId})`);
                 }
-
-                if (!user.source.includes('GHL')) {
-                  user.source.push('GHL');
-                }
-                const ghlName = `${contact.firstName || ''} ${contact.lastName || ''}`.trim();
-                if (ghlName && (!user.name || user.name === 'Unknown')) {
-                  user.name = ghlName;
-                }
+              } else {
+                const errorText = await response.text();
+                console.error(`GHL Search API error for ${user.email} in ${config.name}: ${response.status} - ${errorText}`);
               }
             }
           } catch (err) {
@@ -859,16 +924,16 @@ return {
     }
     
     // Add information about what was successfully fetched before the error
-    if (typeof members2 !== 'undefined') {
-      errorDetails += `Successfully fetched ${members2.length} members. `;
+    if (typeof allMembers !== 'undefined') {
+      errorDetails += `Successfully fetched ${allMembers.length} members. `;
     }
     
-    if (typeof payments2 !== 'undefined') {
-      errorDetails += `Successfully fetched ${payments2.length} payments. `;
+    if (typeof allPayments !== 'undefined') {
+      errorDetails += `Successfully fetched ${allPayments.length} payments. `;
     }
     
-    if (typeof memberships2 !== 'undefined') {
-      errorDetails += `Successfully fetched ${memberships2.length} memberships. `;
+    if (typeof allMemberships !== 'undefined') {
+      errorDetails += `Successfully fetched ${allMemberships.length} memberships. `;
     }
     
     return {

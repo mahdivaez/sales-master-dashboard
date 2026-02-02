@@ -4,9 +4,10 @@ import { useState, useEffect, useCallback } from 'react';
 import { getUnifiedUserData } from './actions';
 import { UnifiedUserTable } from '@/components/UnifiedUserTable';
 import { ElectiveUpload } from '@/components/ElectiveUpload';
-import { Loader2, AlertCircle, RefreshCw, Search, LayoutDashboard, Upload } from 'lucide-react';
+import { Loader2, AlertCircle, RefreshCw, Search, LayoutDashboard, Upload, Building2 } from 'lucide-react';
 import { DateRange } from 'react-day-picker';
 import { DateRangePicker } from '@/components/DateRangePicker';
+import { COMPANIES } from '@/lib/config';
 
 export default function UnifiedDatabasePage() {
   const [loading, setLoading] = useState(false);
@@ -18,11 +19,14 @@ export default function UnifiedDatabasePage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const [electiveData, setElectiveData] = useState<any[]>([]);
+  const [electiveData, setElectiveData] = useState<Record<string, any[]>>({});
   const [hasUploadedCsv, setHasUploadedCsv] = useState(false);
+  const [selectedCompanyId, setSelectedCompanyId] = useState<string>('all');
 
-  const fetchData = useCallback(async (currentPage = 1, search = '', currentElectiveData = electiveData) => {
-    if (!hasUploadedCsv && currentElectiveData.length === 0) return;
+  const fetchData = useCallback(async (currentPage = 1, search = '', currentElectiveDataMap = electiveData, companyId = selectedCompanyId) => {
+    // Check if we have any elective data at all
+    const hasAnyElectiveData = Object.values(currentElectiveDataMap).some(data => data.length > 0);
+    if (!hasUploadedCsv && !hasAnyElectiveData) return;
     
     if (currentPage === 1) setLoading(true);
     setError(null);
@@ -37,6 +41,14 @@ export default function UnifiedDatabasePage() {
       const ghlToken = typeof window !== 'undefined' ? localStorage.getItem('ghl_access_token') || undefined : undefined;
       const ghlLocationId = typeof window !== 'undefined' ? localStorage.getItem('ghl_location_id') || undefined : undefined;
 
+      // Flatten elective data for the action, but we could also filter it here
+      let flattenedElectiveData: any[] = [];
+      if (companyId === 'all') {
+        flattenedElectiveData = Object.values(currentElectiveDataMap).flat();
+      } else {
+        flattenedElectiveData = currentElectiveDataMap[companyId] || [];
+      }
+
       const result = await getUnifiedUserData({
         limit,
         offset,
@@ -45,7 +57,8 @@ export default function UnifiedDatabasePage() {
         endDate,
         ghlToken,
         ghlLocationId,
-        electiveData: currentElectiveData
+        electiveData: flattenedElectiveData,
+        companyId: companyId === 'all' ? undefined : companyId
       });
 
       if (result.success) {
@@ -64,16 +77,16 @@ export default function UnifiedDatabasePage() {
     } finally {
       setLoading(false);
     }
-  }, [dateRange]);
+  }, [dateRange, selectedCompanyId]);
 
   useEffect(() => {
     if (hasUploadedCsv) {
-      fetchData(1, searchTerm, electiveData);
+      fetchData(1, searchTerm, electiveData, selectedCompanyId);
     }
     if (isInitialLoad) {
       setIsInitialLoad(false);
     }
-  }, [searchTerm, dateRange, fetchData, isInitialLoad, hasUploadedCsv]);
+  }, [searchTerm, dateRange, fetchData, isInitialLoad, hasUploadedCsv, selectedCompanyId]);
 
   const loadMore = () => {
     const nextPage = page + 1;
@@ -81,11 +94,15 @@ export default function UnifiedDatabasePage() {
     fetchData(nextPage, searchTerm, electiveData);
   };
 
-  const handleElectiveDataLoaded = (data: any[]) => {
-    setElectiveData(data);
-    setHasUploadedCsv(data.length > 0);
+  const handleElectiveDataLoaded = (data: any[], companyId: string) => {
+    setElectiveData(prev => {
+      const newData = { ...prev, [companyId]: data };
+      // Check if we have any data now
+      const hasAnyData = Object.values(newData).some(d => d.length > 0);
+      setHasUploadedCsv(hasAnyData);
+      return newData;
+    });
     setPage(1);
-    // fetchData will be triggered by useEffect because electiveData/hasUploadedCsv changed
   };
 
   return (
@@ -102,6 +119,19 @@ export default function UnifiedDatabasePage() {
             <p className="text-gray-500 font-medium">Cross-referencing AI CEOS members with Google Sheets records</p>
           </div>
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
+              <Building2 className="w-4 h-4 text-gray-400" />
+              <select
+                value={selectedCompanyId}
+                onChange={(e) => setSelectedCompanyId(e.target.value)}
+                className="bg-transparent border-none focus:ring-0 text-sm font-bold text-gray-700 outline-none"
+              >
+                <option value="all">All Companies</option>
+                {COMPANIES.map(company => (
+                  <option key={company.id} value={company.id}>{company.name}</option>
+                ))}
+              </select>
+            </div>
             <div className="relative">
               <input
                 type="text"
@@ -124,7 +154,15 @@ export default function UnifiedDatabasePage() {
           </div>
         </div>
 
-        <ElectiveUpload onDataLoaded={handleElectiveDataLoaded} />
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
+          {COMPANIES.map(company => (
+            <ElectiveUpload 
+              key={company.id}
+              companyName={company.name}
+              onDataLoaded={(data) => handleElectiveDataLoaded(data, company.id)} 
+            />
+          ))}
+        </div>
 
         {!hasUploadedCsv ? (
           <div className="flex flex-col items-center justify-center py-32 bg-white rounded-3xl shadow-xl border border-gray-100">
