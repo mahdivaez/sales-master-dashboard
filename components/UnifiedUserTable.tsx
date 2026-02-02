@@ -1,7 +1,7 @@
 'use client';
 
 import React, { useState, useEffect } from 'react';
-import { Search, Filter, ExternalLink, Mail, User, Database, Sheet, ArrowUp, ArrowDown, ArrowUpDown, Zap } from 'lucide-react';
+import { Search, Filter, ExternalLink, Mail, User, Database, Sheet, ArrowUp, ArrowDown, ArrowUpDown, Zap, CreditCard } from 'lucide-react';
 import { UnifiedUserModal } from './UnifiedUserModal';
 import { getAccessToken, isAuthenticated } from '@/lib/ghl-client';
 
@@ -9,7 +9,7 @@ interface UnifiedUserTableProps {
   users: any[];
 }
 
-type SortField = 'name' | 'totalSpentWhop' | 'totalSpentSheet' | 'lastPaymentDate';
+type SortField = 'name' | 'totalSpentWhop' | 'totalSpentSheet' | 'totalSpentElective' | 'lastPaymentDate';
 type SortOrder = 'asc' | 'desc' | null;
 
 export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => {
@@ -76,15 +76,20 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
     // Check for Whop activity (payments or memberships)
     const hasWhopActivity = (user.totalSpentWhop > 0) || 
                            (user.whopData?.payments && user.whopData.payments.length > 0) || 
-                           (user.whopData?.memberships && user.whopData.memberships.length > 0);
+                           (user.whopData?.memberships && user.whopData.memberships.length > 0) ||
+                           (user.whopData?.member);
                         
     // Check for Sheet activity (Cash Collected entries)
     const hasSheetActivity = (user.totalSpentSheet > 0) || 
                             (user.sheetData && user.sheetData.length > 0);
 
-    // A user is "empty" if they have NO Whop activity AND NO Sheet activity
+    // Check for Elective activity
+    const hasElectiveActivity = (user.totalSpentElective > 0) ||
+                               (user.electiveData && user.electiveData.length > 0);
+
+    // A user is "empty" if they have NO Whop activity AND NO Sheet activity AND NO Elective activity
     // We ignore Pipeline data for this specific filter as requested
-    const hasNoFinancialData = !hasWhopActivity && !hasSheetActivity;
+    const hasNoFinancialData = !hasWhopActivity && !hasSheetActivity && !hasElectiveActivity;
 
     return matchesSearch && !hasNoFinancialData;
   });
@@ -175,12 +180,23 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                     AI CEOS Revenue <SortIcon field="totalSpentWhop" />
                   </div>
                 </th>
-                <th 
+                <th
                   className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right cursor-pointer hover:text-gray-600 transition-colors"
                   onClick={() => handleSort('totalSpentSheet')}
                 >
                   <div className="flex items-center justify-end">
                     Sheet Revenue <SortIcon field="totalSpentSheet" />
+                  </div>
+                </th>
+                <th
+                  className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right cursor-pointer hover:text-gray-600 transition-colors"
+                  onClick={() => handleSort('totalSpentElective')}
+                >
+                  <div className="flex items-center justify-end gap-1.5">
+                    <div className="w-4 h-4 bg-purple-100 rounded flex items-center justify-center">
+                      <CreditCard className="w-2.5 h-2.5 text-purple-600" />
+                    </div>
+                    Elective Revenue <SortIcon field="totalSpentElective" />
                   </div>
                 </th>
                 <th 
@@ -253,6 +269,9 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                         {user.source.includes('Sheet') && (
                           <span className="px-1.5 py-0.5 bg-emerald-50 text-emerald-600 rounded text-[8px] font-black uppercase">Sheet</span>
                         )}
+                        {user.source.includes('Elective') && (
+                          <span className="px-1.5 py-0.5 bg-purple-50 text-purple-600 rounded text-[8px] font-black uppercase">Elective</span>
+                        )}
                         {(user.source.includes('GHL') || ghlContact?.id) && (
                           <span className="px-1.5 py-0.5 bg-orange-50 text-orange-600 rounded text-[8px] font-black uppercase">GHL</span>
                         )}
@@ -301,6 +320,18 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                     <td className="px-6 py-5 text-right font-bold text-gray-600">
                       ${user.totalSpentSheet.toLocaleString(undefined, { minimumFractionDigits: 2 })}
                     </td>
+                    <td className="px-6 py-5 text-right">
+                      <div className="flex flex-col items-end">
+                        <span className="text-sm font-black text-purple-600">
+                          ${(user.totalSpentElective || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}
+                        </span>
+                        {user.electiveData && user.electiveData.length > 0 && (
+                          <span className="text-[9px] font-bold text-purple-400 uppercase tracking-tighter">
+                            {user.electiveData.length} {user.electiveData.length === 1 ? 'Sale' : 'Sales'}
+                          </span>
+                        )}
+                      </div>
+                    </td>
                     <td className="px-6 py-5">
                       <p className="text-xs font-bold text-gray-700">
                         {user.lastPaymentDate ? new Date(user.lastPaymentDate).toLocaleDateString() : 'N/A'}
@@ -331,3 +362,4 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
     </div>
   );
 };
+

@@ -4,8 +4,85 @@
 import { google } from 'googleapis';
 import fs from 'fs';
 import path from 'path';
+import { cache } from 'react';
 import { getMembers, getPayments, getMemberships, getAllUniqueUsers, getUser } from '@/lib/whop/fetchers';
 import { WhopMember, WhopPayment, WhopMembership } from '@/types';
+
+// Configuration Constants
+const CONFIG = {
+  WHOP_MAX_PAGES: 200,
+  GHL_BATCH_SIZE: 10,
+  USER_FETCH_DELAY: 50, // ms
+  SHEET_DATA_LIMIT: 5000,
+  PIPELINE_DATA_LIMIT: 2000,
+  API_TIMEOUT: 15000, // 15s
+  CACHE_TTL: 5 * 60 * 1000, // 5 min
+  GHL_METADATA_TTL: 15 * 60 * 1000, // 15 min
+};
+
+// Simple In-Memory Cache
+const globalCache: Record<string, { data: any; timestamp: number; ttl: number }> = {};
+
+function getCachedData(key: string) {
+  const cached = globalCache[key];
+  if (cached && Date.now() - cached.timestamp < cached.ttl) {
+    return cached.data;
+  }
+  return null;
+}
+
+function setCachedData(key: string, data: any, ttl: number = CONFIG.CACHE_TTL) {
+  globalCache[key] = { data, timestamp: Date.now(), ttl };
+}
+
+async function getGHLMetadata(ghlToken: string, ghlLocationId: string) {
+  const cacheKey = `ghl_metadata_${ghlLocationId}`;
+  const cached = getCachedData(cacheKey);
+  if (cached) return cached;
+
+  console.log('Fetching GHL metadata (custom fields, users, and pipelines)...');
+  const [cfResponse, usersResponse, pipelinesResponse] = await Promise.all([
+    fetch(`https://services.leadconnectorhq.com/locations/${ghlLocationId}/custom-fields`, {
+      headers: {
+        'Authorization': `Bearer ${ghlToken}`,
+        'Version': '2021-07-28',
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    }),
+    fetch(`https://services.leadconnectorhq.com/users/?locationId=${ghlLocationId}`, {
+      headers: {
+        'Authorization': `Bearer ${ghlToken}`,
+        'Version': '2021-07-28',
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    }),
+    fetch(`https://services.leadconnectorhq.com/opportunities/pipelines?locationId=${ghlLocationId}`, {
+      headers: {
+        'Authorization': `Bearer ${ghlToken}`,
+        'Version': '2021-07-28',
+        'Accept': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+      }
+    })
+  ]);
+
+  const [cfData, usersData, pipelinesData] = await Promise.all([
+    cfResponse.ok ? cfResponse.json() : { customFields: [] },
+    usersResponse.ok ? usersResponse.json() : { users: [] },
+    pipelinesResponse.ok ? pipelinesResponse.json() : { pipelines: [] }
+  ]);
+
+  const metadata = {
+    customFields: cfData.customFields || [],
+    users: usersData.users || [],
+    pipelines: pipelinesData.pipelines || []
+  };
+
+  setCachedData(cacheKey, metadata, CONFIG.GHL_METADATA_TTL);
+  return metadata;
+}
 
 // Helper function to convert string to camelCase
 function toCamelCase(str: string): string {
@@ -23,8 +100,9 @@ export async function getUnifiedUserData(options: {
   endDate?: string;
   ghlToken?: string;
   ghlLocationId?: string;
+  electiveData?: any[];
 } = {}) {
-  const { limit = 50, offset = 0, search = '', startDate, endDate } = options;
+  const { limit = 50, offset = 0, search = '', startDate, endDate, electiveData = [] } = options;
   
   // Use provided tokens or fallback to environment variables
   const ghlToken = options.ghlToken || process.env.GHL_ACCESS_TOKEN;
@@ -40,7 +118,10 @@ export async function getUnifiedUserData(options: {
   let members2: WhopMember[] = [];
   let payments2: WhopPayment[] = [];
   let memberships2: WhopMembership[] = [];
+  let sheetData: any[] = [];
+  let pipelineData: any[] = [];
   let additionalUserData: Record<string, any> = {};
+  
   try {
     const COMPANY_2_ID = 'biz_qcxyUyVWg1WZ7P';
     console.log('Starting unified data fetch process with options:', options);
@@ -48,20 +129,26 @@ export async function getUnifiedUserData(options: {
     // 1. Fetch Whop Data for Company 2 only
     console.log('Fetching Whop data for company ID:', COMPANY_2_ID);
     
-    // Optimization: If search is active, we might want to fetch more or different data,
-    // but Whop API doesn't support email search on these endpoints easily.
-    // We keep the current fetch but we will filter the results.
-    
-    const whopPromises = [
-      getMembers(COMPANY_2_ID, startDate),
-      getPayments(COMPANY_2_ID, startDate),
-      getMemberships(COMPANY_2_ID, startDate)
-    ];
+    // Global tracking for duplicate detection
+    const globalTracking = {
+      memberIds: new Set<string>(),
+      paymentIds: new Set<string>(),
+      membershipIds: new Set<string>()
+    };
 
-    const results = await Promise.all(whopPromises);
-    members2 = results[0] as WhopMember[];
-    payments2 = results[1] as WhopPayment[];
-    memberships2 = results[2] as WhopMembership[];
+    const whopResults = await Promise.allSettled([
+      getMembers(COMPANY_2_ID, undefined, globalTracking.memberIds),
+      getPayments(COMPANY_2_ID, undefined, globalTracking.paymentIds),
+      getMemberships(COMPANY_2_ID, undefined, globalTracking.membershipIds)
+    ]);
+
+    members2 = whopResults[0].status === 'fulfilled' ? whopResults[0].value as WhopMember[] : [];
+    payments2 = whopResults[1].status === 'fulfilled' ? whopResults[1].value as WhopPayment[] : [];
+    memberships2 = whopResults[2].status === 'fulfilled' ? whopResults[2].value as WhopMembership[] : [];
+
+    if (whopResults.some(r => r.status === 'rejected')) {
+      console.warn('Some Whop data fetches failed:', whopResults.filter(r => r.status === 'rejected'));
+    }
 
     // Optimization: Filter Whop data by search term if provided
     if (search) {
@@ -85,55 +172,52 @@ export async function getUnifiedUserData(options: {
     
     console.log(`Initial data fetch complete: ${members2.length} members, ${payments2.length} payments, ${memberships2.length} memberships`);
 
-    // 1.1 Fetch additional user data for users who have payments/memberships but aren't in the members list
-    // Optimization: Only fetch additional data for users we might actually display or if search is active
-    console.log('Fetching additional user data for users not in members list...');
-    
-    // If we have a search term, we only care about users matching that search
-    let filteredPaymentsForAdditionalData = payments2;
-    let filteredMembershipsForAdditionalData = memberships2;
-    
-    if (search) {
-      const searchLower = search.toLowerCase();
-      filteredPaymentsForAdditionalData = payments2.filter(p => 
-        p.user?.email?.toLowerCase().includes(searchLower) || 
-        p.user?.name?.toLowerCase().includes(searchLower) ||
-        p.user?.username?.toLowerCase().includes(searchLower)
-      );
-      filteredMembershipsForAdditionalData = memberships2.filter(m => 
-        m.user?.email?.toLowerCase().includes(searchLower) || 
-        m.user?.name?.toLowerCase().includes(searchLower) ||
-        m.user?.username?.toLowerCase().includes(searchLower)
-      );
-    } else {
-      // If no search, maybe only fetch for the first few hundred to avoid massive API calls
-      // since we only show 50 per page anyway.
-      // But we need them for total counts... let's limit to a reasonable number.
-      filteredPaymentsForAdditionalData = payments2.slice(0, 500);
-      filteredMembershipsForAdditionalData = memberships2.slice(0, 500);
-    }
-
-    additionalUserData = await getAllUniqueUsers(
-      filteredPaymentsForAdditionalData, 
-      filteredMembershipsForAdditionalData, 
-      members2, 
-      COMPANY_2_ID
-    );
-    console.log(`Fetched additional data for ${Object.keys(additionalUserData).length} users`);
+    // 1.1 Fetch additional user data - DEFERRED until after initial merge and pagination
+    // We will only fetch additional data for users on the current page to save hundreds of API calls.
 
     // 2. Fetch Sheet Data
     console.log('Fetching sheet and pipeline data...');
-    const [sheetResult, pipelineResult] = await Promise.all([
-      getCashCollectedData(),
-      getPipelineStageData()
-    ]);
-    const sheetData = sheetResult.success ? sheetResult.data : [];
-    const pipelineData = pipelineResult.success ? pipelineResult.data : [];
+    
+    const sheetCacheKey = 'google_sheet_data';
+    const pipelineCacheKey = 'google_pipeline_data';
+    
+    sheetData = getCachedData(sheetCacheKey) || [];
+    pipelineData = getCachedData(pipelineCacheKey) || [];
+    
+    if (sheetData.length === 0 || pipelineData.length === 0) {
+      const results = await Promise.allSettled([
+        sheetData.length === 0 ? getCashCollectedData() : Promise.resolve({ success: true, data: sheetData }),
+        pipelineData.length === 0 ? getPipelineStageData() : Promise.resolve({ success: true, data: pipelineData })
+      ]);
+      
+      if (results[0].status === 'fulfilled') {
+        const res = results[0].value as any;
+        if (res.success) {
+          sheetData = res.data;
+          setCachedData(sheetCacheKey, sheetData);
+        }
+      }
+      if (results[1].status === 'fulfilled') {
+        const res = results[1].value as any;
+        if (res.success) {
+          pipelineData = res.data;
+          setCachedData(pipelineCacheKey, pipelineData);
+        }
+      }
+    }
+    
     console.log(`Sheet data fetch complete: ${sheetData?.length || 0} sheet records, ${pipelineData?.length || 0} pipeline records`);
 
     // 3. Combine Data by Email
     console.log('Beginning data merging process...');
     const unifiedData: Record<string, any> = {};
+    
+    // Global tracking for duplicate detection
+    const tracking = {
+      memberIds: new Set<string>(),
+      paymentIds: new Set<string>(),
+      membershipIds: new Set<string>()
+    };
 
     // Helper to process Whop data
     const processWhopData = (
@@ -143,18 +227,22 @@ export async function getUnifiedUserData(options: {
       companyLabel: string,
       additionalUserData: Record<string, any> = {}
     ) => {
+      console.log(`Processing ${members.length} members for ${companyLabel}`);
       members.forEach((member: WhopMember) => {
-        if (!member.user || !member.user.email) return;
-        const email = member.user.email.toLowerCase().trim();
-        const userId = member.user.id;
+        const userObj = member.user || (member as any).user_data;
+        if (!userObj || !userObj.email || tracking.memberIds.has(member.id)) return;
+        tracking.memberIds.add(member.id);
+        
+        const email = userObj.email.toLowerCase().trim();
+        const userId = userObj.id;
         
         // Try to get enhanced user data if available
         const enhancedUserData = userId && additionalUserData[userId] ? additionalUserData[userId] : null;
         
         // Use enhanced data if available, otherwise use member data
         const name = enhancedUserData?.name ||
-                    (member.user.name && member.user.name !== 'Unknown' ? member.user.name : '');
-        const username = enhancedUserData?.username || member.user.username || '';
+                    (userObj.name && userObj.name !== 'Unknown' ? userObj.name : '');
+        const username = enhancedUserData?.username || userObj.username || '';
 
         if (!unifiedData[email]) {
           unifiedData[email] = {
@@ -179,28 +267,31 @@ export async function getUnifiedUserData(options: {
           if (!unifiedData[email].source.includes(companyLabel)) {
             unifiedData[email].source.push(companyLabel);
           }
-          // totalSpentWhop is already handled by members and payments processing
           if (!unifiedData[email].whopData.member) {
             unifiedData[email].whopData.member = member;
-            unifiedData[email].whopId = member.user.id;
+            unifiedData[email].whopId = userObj.id;
             if (name) unifiedData[email].name = name;
-            unifiedData[email].username = member.user.username;
+            unifiedData[email].username = userObj.username;
           }
         }
       });
 
+      console.log(`Processing ${payments.length} payments for ${companyLabel}`);
       payments.forEach((payment: WhopPayment) => {
-        if (!payment.user || !payment.user.email) return;
-        const email = payment.user.email.toLowerCase().trim();
-        const userId = payment.user.id;
+        const userObj = payment.user || (payment as any).user_data;
+        if (!userObj || !userObj.email || tracking.paymentIds.has(payment.id)) return;
+        tracking.paymentIds.add(payment.id);
+        
+        const email = userObj.email.toLowerCase().trim();
+        const userId = userObj.id;
         
         // Try to get enhanced user data if available
         const enhancedUserData = userId && additionalUserData[userId] ? additionalUserData[userId] : null;
         
         // Use enhanced data if available, otherwise use payment data
         const name = enhancedUserData?.name ||
-                    (payment.user.name && payment.user.name !== 'Unknown' ? payment.user.name : '');
-        const username = enhancedUserData?.username || payment.user.username || '';
+                    (userObj.name && userObj.name !== 'Unknown' ? userObj.name : '');
+        const username = enhancedUserData?.username || userObj.username || '';
         
         const paymentDate = payment.created_at ? new Date(payment.created_at).getTime() : 0;
 
@@ -230,14 +321,20 @@ export async function getUnifiedUserData(options: {
           if (!unifiedData[email].source.includes(companyLabel)) {
             unifiedData[email].source.push(companyLabel);
           }
-          unifiedData[email].whopData.payments.push(payment);
-          if (payment.substatus === 'succeeded' || payment.substatus === 'resolution_won') {
-            const amount = payment.amount_after_fees || payment.usd_total;
-            const amountBefore = payment.usd_total;
-            const refunded = payment.refunded_amount || 0;
-            unifiedData[email].totalSpentWhop += Math.max(0, amount - refunded);
-            unifiedData[email].totalSpentWhopBeforeFees += Math.max(0, amountBefore - refunded);
+          
+          // Double check for duplicate payment in the user's array
+          const paymentExists = unifiedData[email].whopData.payments.some((p: any) => p.id === payment.id);
+          if (!paymentExists) {
+            unifiedData[email].whopData.payments.push(payment);
+            if (payment.substatus === 'succeeded' || payment.substatus === 'resolution_won') {
+              const amount = payment.amount_after_fees || payment.usd_total;
+              const amountBefore = payment.usd_total;
+              const refunded = payment.refunded_amount || 0;
+              unifiedData[email].totalSpentWhop += Math.max(0, amount - refunded);
+              unifiedData[email].totalSpentWhopBeforeFees += Math.max(0, amountBefore - refunded);
+            }
           }
+          
           if (name && (!unifiedData[email].name || unifiedData[email].name === 'Unknown')) {
             unifiedData[email].name = name;
           }
@@ -247,18 +344,22 @@ export async function getUnifiedUserData(options: {
         }
       });
 
+      console.log(`Processing ${memberships.length} memberships for ${companyLabel}`);
       memberships.forEach((membership: WhopMembership) => {
-        if (!membership.user || !membership.user.email) return;
-        const email = membership.user.email.toLowerCase().trim();
-        const userId = membership.user.id;
+        const userObj = membership.user || (membership as any).user_data;
+        if (!userObj || !userObj.email || tracking.membershipIds.has(membership.id)) return;
+        tracking.membershipIds.add(membership.id);
+        
+        const email = userObj.email.toLowerCase().trim();
+        const userId = userObj.id;
         
         // Try to get enhanced user data if available
         const enhancedUserData = userId && additionalUserData[userId] ? additionalUserData[userId] : null;
         
         // Use enhanced data if available, otherwise use membership data
         const name = enhancedUserData?.name ||
-                    (membership.user.name && membership.user.name !== 'Unknown' ? membership.user.name : '');
-        const username = enhancedUserData?.username || membership.user.username || '';
+                    (userObj.name && userObj.name !== 'Unknown' ? userObj.name : '');
+        const username = enhancedUserData?.username || userObj.username || '';
         
         if (!unifiedData[email]) {
           unifiedData[email] = {
@@ -283,7 +384,13 @@ export async function getUnifiedUserData(options: {
           if (!unifiedData[email].source.includes(companyLabel)) {
             unifiedData[email].source.push(companyLabel);
           }
-          unifiedData[email].whopData.memberships.push(membership);
+          
+          // Double check for duplicate membership in the user's array
+          const membershipExists = unifiedData[email].whopData.memberships.some((m: any) => m.id === membership.id);
+          if (!membershipExists) {
+            unifiedData[email].whopData.memberships.push(membership);
+          }
+          
           if (name && (!unifiedData[email].name || unifiedData[email].name === 'Unknown')) {
             unifiedData[email].name = name;
           }
@@ -292,22 +399,18 @@ export async function getUnifiedUserData(options: {
     };
 
     // Process only Company 2
-    processWhopData(members2, payments2, memberships2, 'Whop', additionalUserData);
+    processWhopData(members2, payments2, memberships2, 'Whop', {});
 
     // 4. Ensure all members are included even if they have no payments/memberships in the fetched lists
     members2.forEach((member: WhopMember) => {
-      if (!member.user || !member.user.email) return;
-      const email = member.user.email.toLowerCase().trim();
-      const userId = member.user.id;
+      const userObj = member.user || (member as any).user_data;
+      if (!userObj || !userObj.email) return;
+      const email = userObj.email.toLowerCase().trim();
+      const userId = userObj.id;
       
       if (!unifiedData[email]) {
-        // Try to get enhanced user data if available
-        const enhancedUserData = userId && additionalUserData[userId] ? additionalUserData[userId] : null;
-        
-        // Use enhanced data if available, otherwise use member data
-        const name = enhancedUserData?.name ||
-                    (member.user.name && member.user.name !== 'Unknown' ? member.user.name : '');
-        const username = enhancedUserData?.username || member.user.username || '';
+        const name = (userObj.name && userObj.name !== 'Unknown' ? userObj.name : '');
+        const username = userObj.username || '';
         
         unifiedData[email] = {
           email,
@@ -318,35 +421,7 @@ export async function getUnifiedUserData(options: {
             member,
             payments: [],
             memberships: [],
-            enhancedUserData: enhancedUserData
-          },
-          sheetData: [],
-          totalSpentWhop: 0,
-          totalSpentWhopBeforeFees: 0,
-          totalSpentSheet: 0,
-          lastPaymentDate: null,
-          source: ['Whop']
-        };
-      }
-    });
-    
-    // 4.1 Ensure all users with additional data are included even if they're not in members/payments/memberships
-    Object.entries(additionalUserData).forEach(([userId, userData]) => {
-      if (!userData.email) return;
-      
-      const email = userData.email.toLowerCase().trim();
-      if (!unifiedData[email]) {
-        // console.log(`Adding user from additional data: ${userData.email} (${userId})`);
-        unifiedData[email] = {
-          email,
-          name: userData.name || userData.username || 'Unknown',
-          username: userData.username || '',
-          whopId: userId,
-          whopData: {
-            member: null,
-            payments: [],
-            memberships: [],
-            enhancedUserData: userData
+            enhancedUserData: null
           },
           sheetData: [],
           totalSpentWhop: 0,
@@ -359,7 +434,7 @@ export async function getUnifiedUserData(options: {
     });
 
     // Process Sheet Data
-    let sheetDataToProcess = (sheetResult.success && sheetResult.data) ? sheetResult.data : [];
+    let sheetDataToProcess = sheetData;
     
     // Optimization: Filter sheet data by email if search is active
     if (search) {
@@ -394,9 +469,9 @@ export async function getUnifiedUserData(options: {
     // we could potentially skip processing the rest of the sheet data.
     // However, for accurate "totalSpentSheet" and "lastPaymentDate", we need to process all relevant records.
     // But we can at least limit the number of records we process if they are too many.
-    if (!search && !startDate && !endDate && sheetDataToProcess.length > 5000) {
-       console.log(`Limiting sheet data processing from ${sheetDataToProcess.length} to 5000 for performance`);
-       sheetDataToProcess = sheetDataToProcess.slice(0, 5000);
+    if (!search && !startDate && !endDate && sheetDataToProcess.length > CONFIG.SHEET_DATA_LIMIT) {
+       console.log(`Limiting sheet data processing from ${sheetDataToProcess.length} to ${CONFIG.SHEET_DATA_LIMIT} for performance`);
+       sheetDataToProcess = sheetDataToProcess.slice(0, CONFIG.SHEET_DATA_LIMIT);
     }
 
     sheetDataToProcess.forEach((row: any) => {
@@ -423,7 +498,7 @@ export async function getUnifiedUserData(options: {
         // Merge sheet data into existing Whop user
         unifiedData[email].sheetData.push(row);
         const amount = parseFloat(row.amount.replace(/[^0-9.-]+/g, '')) || 0;
-        unifiedData[email].totalSpentSheet += Math.max(0, amount);
+        unifiedData[email].totalSpentSheet += amount;
         if (!unifiedData[email].source.includes('Sheet')) {
           unifiedData[email].source.push('Sheet');
         }
@@ -450,7 +525,7 @@ export async function getUnifiedUserData(options: {
           sheetData: [row],
           totalSpentWhop: 0,
           totalSpentWhopBeforeFees: 0,
-          totalSpentSheet: Math.max(0, amount),
+          totalSpentSheet: amount,
           lastPaymentDate: sheetDate,
           source: ['Sheet']
         };
@@ -458,7 +533,7 @@ export async function getUnifiedUserData(options: {
     });
 
     // Process Pipeline Data
-    let pipelineDataToProcess = (pipelineResult.success && pipelineResult.data) ? pipelineResult.data : [];
+    let pipelineDataToProcess = pipelineData;
     
     // Optimization: Filter pipeline data by email if search is active, or limit it
     if (search) {
@@ -492,9 +567,9 @@ export async function getUnifiedUserData(options: {
     // However, we need to merge them all to get accurate "source" and "pipelineData" for users.
     // But if the user is only looking for "financial data" (Whop/Sheet), 
     // we can skip pipeline-only users if they are too many.
-    if (!search && !startDate && !endDate && pipelineDataToProcess.length > 2000) {
-      console.log(`Limiting pipeline data processing from ${pipelineDataToProcess.length} to 2000 for performance`);
-      pipelineDataToProcess = pipelineDataToProcess.slice(0, 2000);
+    if (!search && !startDate && !endDate && pipelineDataToProcess.length > CONFIG.PIPELINE_DATA_LIMIT) {
+      console.log(`Limiting pipeline data processing from ${pipelineDataToProcess.length} to ${CONFIG.PIPELINE_DATA_LIMIT} for performance`);
+      pipelineDataToProcess = pipelineDataToProcess.slice(0, CONFIG.PIPELINE_DATA_LIMIT);
     }
     
     pipelineDataToProcess.forEach((row: any) => {
@@ -538,7 +613,61 @@ export async function getUnifiedUserData(options: {
       }
     });
 
-    // Return all data (Company 2 + Sheet + Pipeline)
+    // Process Elective Data
+    if (electiveData && electiveData.length > 0) {
+      console.log(`Processing ${electiveData.length} elective records...`);
+      electiveData.forEach((row: any) => {
+        const email = (row.customerEmail || '').toLowerCase().trim();
+        if (!email) return;
+
+        const name = (row.customerName || '').trim();
+        const amount = row.netAmount || 0;
+        const saleDate = row.saleDate ? new Date(row.saleDate).getTime() : 0;
+
+        if (unifiedData[email]) {
+          if (!unifiedData[email].electiveData) {
+            unifiedData[email].electiveData = [];
+          }
+          unifiedData[email].electiveData.push(row);
+          unifiedData[email].totalSpentElective = (unifiedData[email].totalSpentElective || 0) + amount;
+          
+          if (!unifiedData[email].source.includes('Elective')) {
+            unifiedData[email].source.push('Elective');
+          }
+          
+          if (!unifiedData[email].lastPaymentDate || saleDate > unifiedData[email].lastPaymentDate) {
+            unifiedData[email].lastPaymentDate = saleDate;
+          }
+
+          if (name && (!unifiedData[email].name || unifiedData[email].name === 'Unknown')) {
+            unifiedData[email].name = name;
+          }
+        } else {
+          unifiedData[email] = {
+            email,
+            name: name || 'Unknown',
+            username: '',
+            whopId: '',
+            whopData: {
+              member: null,
+              payments: [],
+              memberships: []
+            },
+            sheetData: [],
+            pipelineData: [],
+            electiveData: [row],
+            totalSpentWhop: 0,
+            totalSpentWhopBeforeFees: 0,
+            totalSpentSheet: 0,
+            totalSpentElective: amount,
+            lastPaymentDate: saleDate,
+            source: ['Elective']
+          };
+        }
+      });
+    }
+
+    // Return all data (Company 2 + Sheet + Pipeline + Elective)
     let finalData = Object.values(unifiedData);
 
     // Apply search filter server-side
@@ -552,83 +681,66 @@ export async function getUnifiedUserData(options: {
     }
 
     // Apply "has financial data" filter server-side (as done in the component)
-    finalData = finalData.filter(user => {
+    let filteredFinalData = finalData.filter(user => {
       const hasWhopActivity = (user.totalSpentWhop > 0) ||
                              (user.whopData?.payments && user.whopData.payments.length > 0) ||
-                             (user.whopData?.memberships && user.whopData.memberships.length > 0);
-      const hasSheetActivity = (user.totalSpentSheet > 0) ||
-                              (user.sheetData && user.sheetData.length > 0);
-      
-      return hasWhopActivity || hasSheetActivity;
+                             (user.whopData?.memberships && user.whopData.memberships.length > 0) ||
+                             (user.whopData?.member);
+     const hasSheetActivity = (user.totalSpentSheet > 0) ||
+                             (user.sheetData && user.sheetData.length > 0);
+     const hasElectiveActivity = (user.totalSpentElective > 0) ||
+                                (user.electiveData && user.electiveData.length > 0);
+     
+     return hasWhopActivity || hasSheetActivity || hasElectiveActivity;
     });
 
     // Sort by lastPaymentDate desc by default
-    finalData.sort((a, b) => (b.lastPaymentDate || 0) - (a.lastPaymentDate || 0));
+    filteredFinalData.sort((a, b) => (b.lastPaymentDate || 0) - (a.lastPaymentDate || 0));
 
-    const totalCount = finalData.length;
-    const paginatedData = finalData.slice(offset, offset + limit);
+    const totalCount = filteredFinalData.length;
+    const paginatedData = filteredFinalData.slice(offset, offset + limit);
 
-    // 5. Fetch GHL data for the paginated results only (Efficient approach)
-    if (ghlToken && ghlLocationId && paginatedData.length > 0) {
-      console.log(`Fetching GHL data for ${paginatedData.length} paginated users...`);
-      console.log(`Using Location ID: ${ghlLocationId}`);
-      console.log(`Token starts with: ${ghlToken.substring(0, 10)}...`);
-    } else {
-      console.log('Skipping GHL fetch:', { 
-        hasToken: !!ghlToken, 
-        hasLocationId: !!ghlLocationId, 
-        dataLength: paginatedData.length 
+    // 5. Fetch additional Whop user data for the paginated results only (Lazy Loading)
+    const usersNeedingData = paginatedData.filter(user =>
+      user.whopId && !user.whopData.enhancedUserData && user.source.includes('Whop')
+    );
+
+    if (usersNeedingData.length > 0) {
+      console.log(`Lazy loading additional Whop data for ${usersNeedingData.length} users on current page...`);
+      const lazyUserData = await getAllUniqueUsers(
+        [], // No payments needed, we already have the IDs
+        [], // No memberships needed
+        [], // No members needed
+        COMPANY_2_ID,
+        usersNeedingData.map(u => u.whopId) // Pass explicit IDs to fetch
+      );
+
+      // Merge lazy loaded data back into paginated results
+      paginatedData.forEach(user => {
+        if (user.whopId && lazyUserData[user.whopId]) {
+          const enhanced = lazyUserData[user.whopId];
+          user.whopData.enhancedUserData = enhanced;
+          if (enhanced.name && (!user.name || user.name === 'Unknown')) {
+            user.name = enhanced.name;
+          }
+          if (enhanced.username) {
+            user.username = enhanced.username;
+          }
+        }
       });
     }
 
+    // 6. Fetch GHL data for the paginated results only (Efficient approach)
     if (ghlToken && ghlLocationId && paginatedData.length > 0) {
-      // Fetch custom fields schema and users once for the batch
-let customFields: any[] = [];
-      let ghlUsers: any[] = [];
-      try {
-        console.log('Fetching GHL metadata (custom fields and users)...');
-        const [cfResponse, usersResponse] = await Promise.all([
-          fetch(`https://services.leadconnectorhq.com/locations/${ghlLocationId}/custom-fields`, {
-            headers: {
-              'Authorization': `Bearer ${ghlToken}`,
-              'Version': '2021-07-28',
-              'Accept': 'application/json'
-            }
-          }),
-          fetch(`https://services.leadconnectorhq.com/users/?locationId=${ghlLocationId}`, {
-            headers: {
-              'Authorization': `Bearer ${ghlToken}`,
-              'Version': '2021-07-28',
-              'Accept': 'application/json'
-            }
-          })
-        ]);
+      const ghlMetadata = await getGHLMetadata(ghlToken, ghlLocationId);
+      const { customFields, users: ghlUsers, pipelines } = ghlMetadata;
 
-        if (cfResponse.ok) {
-          const cfData = await cfResponse.json();
-          customFields = cfData.customFields || [];
-          console.log(`Fetched ${customFields.length} custom fields`);
-        } else {
-          const errorText = await cfResponse.text();
-          console.error(`Failed to fetch custom fields: ${cfResponse.status}`, errorText);
-        }
-        
-        if (usersResponse.ok) {
-          const usersData = await usersResponse.json();
-          ghlUsers = usersData.users || [];
-          console.log(`Fetched ${ghlUsers.length} GHL users`);
-        } else {
-          const errorText = await usersResponse.text();
-          console.error(`Failed to fetch GHL users: ${usersResponse.status}`, errorText);
-        }
-      } catch (err) {
-        console.error('Error fetching GHL metadata:', err);
-      }
+      // Parallelize GHL fetches for the entire page with concurrency control
+      const CONCURRENCY_LIMIT = CONFIG.GHL_BATCH_SIZE;
+      const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 
-      // Use a more efficient search endpoint if possible, or parallelize with a limit
-      const BATCH_SIZE = 5; // Process in small batches to avoid hitting rate limits too hard
-      for (let i = 0; i < paginatedData.length; i += BATCH_SIZE) {
-        const batch = paginatedData.slice(i, i + BATCH_SIZE);
+      for (let i = 0; i < paginatedData.length; i += CONCURRENCY_LIMIT) {
+        const batch = paginatedData.slice(i, i + CONCURRENCY_LIMIT);
         await Promise.all(batch.map(async (user: any) => {
           try {
             // Try searching by email specifically using the contacts search endpoint with filters
@@ -638,7 +750,8 @@ let customFields: any[] = [];
                 'Authorization': `Bearer ${ghlToken}`,
                 'Version': '2021-07-28',
                 'Accept': 'application/json',
-                'Content-Type': 'application/json'
+                'Content-Type': 'application/json',
+                'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
               },
               body: JSON.stringify({
                 locationId: ghlLocationId,
@@ -657,36 +770,17 @@ let customFields: any[] = [];
               const data = await response.json();
               const contact = data.contacts?.[0];
               if (contact) {
-                console.log(`Found GHL contact for ${user.email}: ${contact.id}`);
                 // Fetch opportunities for this contact
                 const oppResponse = await fetch(`https://services.leadconnectorhq.com/opportunities/search?location_id=${ghlLocationId}&contact_id=${contact.id}`, {
                   headers: {
                     'Authorization': `Bearer ${ghlToken}`,
                     'Version': '2021-07-28',
-                    'Accept': 'application/json'
+                    'Accept': 'application/json',
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
                   }
                 });
                 const oppData = oppResponse.ok ? await oppResponse.json() : { opportunities: [] };
-                
-                // Ensure opportunities is always an array
                 const opportunities = Array.isArray(oppData.opportunities) ? oppData.opportunities : [];
-                console.log(`Opportunities for ${user.email}:`, opportunities.length);
-
-                // Fetch pipelines for stage name resolution
-                const pipelinesResponse = await fetch(`https://services.leadconnectorhq.com/opportunities/pipelines?locationId=${ghlLocationId}`, {
-                  headers: {
-                    'Authorization': `Bearer ${ghlToken}`,
-                    'Version': '2021-07-28',
-                    'Accept': 'application/json'
-                  }
-                });
-                const pipelinesData = pipelinesResponse.ok ? await pipelinesResponse.json() : { pipelines: [] };
-                const pipelines = Array.isArray(pipelinesData.pipelines) ? pipelinesData.pipelines : [];
-                
-                // Debug log for pipelines
-                if (i === 0) {
-                  console.log(`Pipelines fetched: ${pipelines.length}`);
-                }
 
                 user.ghlData = {
                   contact,
@@ -699,19 +793,6 @@ let customFields: any[] = [];
                 // Add direct access to active opportunity data for easier UI rendering
                 const activeOpp = opportunities.find((o: any) => o.status === 'open') || opportunities[0];
                 
-                // Debug log to see what we're getting
-                console.log(`GHL Data for ${user.email}:`, {
-                  hasContact: !!contact,
-                  contactId: contact.id,
-                  oppCount: opportunities.length,
-                  activeOppId: activeOpp?.id,
-                  pipelineCount: pipelines.length
-                });
-                console.log(`GHL Full Contact for ${user.email}:`, JSON.stringify(contact, null, 2));
-                if (opportunities.length > 0) {
-                  console.log(`GHL Opportunities for ${user.email}:`, JSON.stringify(opportunities, null, 2));
-                }
-
                 if (activeOpp) {
                   user.ghlActiveOpp = activeOpp;
                   const pipeline = pipelines.find((p: any) => p.id === activeOpp.pipelineId);
@@ -738,21 +819,20 @@ let customFields: any[] = [];
                 if (ghlName && (!user.name || user.name === 'Unknown')) {
                   user.name = ghlName;
                 }
-              } else {
-                console.log(`No GHL contact found for ${user.email}`);
               }
-            } else {
-              const errorText = await response.text();
-              console.error(`GHL Search API error for ${user.email}: ${response.status}`, errorText);
             }
           } catch (err) {
             console.error(`Error fetching GHL contact for ${user.email}:`, err);
           }
         }));
+        
+        // Small delay between batches to be safe with GHL rate limits
+        if (i + CONCURRENCY_LIMIT < paginatedData.length) {
+          await delay(CONFIG.USER_FETCH_DELAY);
+        }
       }
     }
-
-    return {
+return {
       success: true,
       data: paginatedData,
       totalCount,
@@ -815,7 +895,8 @@ export async function getGhlContactByEmail(email: string) {
         'Authorization': `Bearer ${accessToken}`,
         'Version': '2021-07-28',
         'Accept': 'application/json',
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
       },
       body: JSON.stringify({
         locationId,
@@ -856,9 +937,9 @@ export async function getGhlContactByEmail(email: string) {
 }
 
 // Main Server Action to get cash collected data
-export async function getCashCollectedData(spreadsheetUrl?: string) {
+export const getCashCollectedData = cache(async (spreadsheetUrl?: string) => {
   // Default URL if not provided
-  const defaultUrl = 'https://docs.google.com/spreadsheets/d/19iD_NQgdNL10GucK6ZDHN91mtRtOktNT8KX37mLd15s/edit?gid=1877425889#gid=1877425889';
+  const defaultUrl = 'https://docs.google.com/spreadsheets/d/1dKazylux_iM4LGo_1fj5hJiACZLb_fKsfFiSNdjYgx4/edit?gid=1877425889#gid=1877425889';
   const url = spreadsheetUrl || defaultUrl;
 
   try {
@@ -972,9 +1053,9 @@ export async function getCashCollectedData(spreadsheetUrl?: string) {
       error: errorMessage,
     };
   }
-}
+});
 
-export async function getPipelineStageData(spreadsheetUrl?: string) {
+export const getPipelineStageData = cache(async (spreadsheetUrl?: string) => {
   const defaultUrl = 'https://docs.google.com/spreadsheets/d/19iD_NQgdNL10GucK6ZDHN91mtRtOktNT8KX37mLd15s/edit?gid=1877425889#gid=1877425889';
   const url = spreadsheetUrl || defaultUrl;
 
@@ -1051,4 +1132,4 @@ export async function getPipelineStageData(spreadsheetUrl?: string) {
       error: error.message || 'Failed to fetch pipeline data',
     };
   }
-}
+});

@@ -3,12 +3,13 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getUnifiedUserData } from './actions';
 import { UnifiedUserTable } from '@/components/UnifiedUserTable';
-import { Loader2, AlertCircle, RefreshCw, Search, LayoutDashboard } from 'lucide-react';
+import { ElectiveUpload } from '@/components/ElectiveUpload';
+import { Loader2, AlertCircle, RefreshCw, Search, LayoutDashboard, Upload } from 'lucide-react';
 import { DateRange } from 'react-day-picker';
 import { DateRangePicker } from '@/components/DateRangePicker';
 
 export default function UnifiedDatabasePage() {
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [users, setUsers] = useState<any[]>([]);
   const [totalCount, setTotalCount] = useState(0);
@@ -17,8 +18,12 @@ export default function UnifiedDatabasePage() {
   const [searchTerm, setSearchTerm] = useState('');
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
   const [isInitialLoad, setIsInitialLoad] = useState(true);
+  const [electiveData, setElectiveData] = useState<any[]>([]);
+  const [hasUploadedCsv, setHasUploadedCsv] = useState(false);
 
-  const fetchData = useCallback(async (currentPage = 1, search = '') => {
+  const fetchData = useCallback(async (currentPage = 1, search = '', currentElectiveData = electiveData) => {
+    if (!hasUploadedCsv && currentElectiveData.length === 0) return;
+    
     if (currentPage === 1) setLoading(true);
     setError(null);
     try {
@@ -39,7 +44,8 @@ export default function UnifiedDatabasePage() {
         startDate,
         endDate,
         ghlToken,
-        ghlLocationId
+        ghlLocationId,
+        electiveData: currentElectiveData
       });
 
       if (result.success) {
@@ -61,16 +67,25 @@ export default function UnifiedDatabasePage() {
   }, [dateRange]);
 
   useEffect(() => {
-    fetchData(1, searchTerm);
+    if (hasUploadedCsv) {
+      fetchData(1, searchTerm, electiveData);
+    }
     if (isInitialLoad) {
       setIsInitialLoad(false);
     }
-  }, [searchTerm, dateRange, fetchData, isInitialLoad]);
+  }, [searchTerm, dateRange, fetchData, isInitialLoad, hasUploadedCsv]);
 
   const loadMore = () => {
     const nextPage = page + 1;
     setPage(nextPage);
-    fetchData(nextPage, searchTerm);
+    fetchData(nextPage, searchTerm, electiveData);
+  };
+
+  const handleElectiveDataLoaded = (data: any[]) => {
+    setElectiveData(data);
+    setHasUploadedCsv(data.length > 0);
+    setPage(1);
+    // fetchData will be triggered by useEffect because electiveData/hasUploadedCsv changed
   };
 
   return (
@@ -109,7 +124,19 @@ export default function UnifiedDatabasePage() {
           </div>
         </div>
 
-        {loading ? (
+        <ElectiveUpload onDataLoaded={handleElectiveDataLoaded} />
+
+        {!hasUploadedCsv ? (
+          <div className="flex flex-col items-center justify-center py-32 bg-white rounded-3xl shadow-xl border border-gray-100">
+            <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
+              <Upload className="w-10 h-10 text-blue-600" />
+            </div>
+            <h3 className="text-2xl font-black text-gray-900 mb-2">Waiting for CSV Upload</h3>
+            <p className="text-gray-500 font-medium max-w-md text-center">
+              Please upload your Elective CSV file above to start fetching and merging data from other sources.
+            </p>
+          </div>
+        ) : loading && users.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-32 bg-white rounded-3xl shadow-xl border border-gray-100">
             <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
             <p className="text-gray-500 font-bold animate-pulse">Merging data sources...</p>

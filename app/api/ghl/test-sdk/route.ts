@@ -50,6 +50,8 @@ export async function GET(request: NextRequest) {
         let remainingToScan = filterUnified ? 5000 : limitParam; 
         const sampleGhl: string[] = [];
 
+        const delay = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
         while (remainingToScan > 0) {
           const currentLimit = 100; // Always fetch max for efficiency when scanning
           const fetchUrl: string = `https://services.leadconnectorhq.com/contacts/?locationId=${locationId}&limit=${currentLimit}${lastId ? `&startAfterId=${lastId}` : ''}`;
@@ -58,7 +60,8 @@ export async function GET(request: NextRequest) {
             headers: {
               'Authorization': `Bearer ${tokenParam}`,
               'Version': '2021-07-28',
-              'Accept': 'application/json'
+              'Accept': 'application/json',
+              'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
             }
           });
           
@@ -82,6 +85,9 @@ export async function GET(request: NextRequest) {
           
           if (allContacts.length >= limitParam) break;
           if (contacts.length < currentLimit) break;
+
+          // Add a small delay to avoid rate limiting
+          await delay(200);
         }
 
         return NextResponse.json({ 
@@ -106,7 +112,8 @@ export async function GET(request: NextRequest) {
           headers: {
             'Authorization': `Bearer ${tokenParam}`,
             'Version': '2021-07-28',
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           }
         });
         const oppData = await oppResponse.json();
@@ -117,7 +124,8 @@ export async function GET(request: NextRequest) {
           headers: {
             'Authorization': `Bearer ${tokenParam}`,
             'Version': '2021-07-28',
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           }
         });
         const usersData = await usersResponse.json();
@@ -128,7 +136,8 @@ export async function GET(request: NextRequest) {
           headers: {
             'Authorization': `Bearer ${tokenParam}`,
             'Version': '2021-07-28',
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           }
         });
         const pipelinesData = await pipelinesResponse.json();
@@ -145,7 +154,8 @@ export async function GET(request: NextRequest) {
           headers: {
             'Authorization': `Bearer ${tokenParam}`,
             'Version': '2021-07-28',
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           }
         });
         const data = await response.json();
@@ -162,7 +172,8 @@ export async function GET(request: NextRequest) {
           headers: {
             'Authorization': `Bearer ${tokenParam}`,
             'Version': '2021-07-28',
-            'Accept': 'application/json'
+            'Accept': 'application/json',
+            'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
           }
         });
         const data = await response.json();

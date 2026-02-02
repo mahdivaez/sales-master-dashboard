@@ -19,6 +19,8 @@ async function whopFetch(endpoint: string, params: Record<string, string> = {}, 
 
   const apiKey = (companyId && COMPANY_API_KEYS[companyId]) || DEFAULT_WHOP_API_KEY;
   
+  console.log(`Using API Key for company ${companyId}: ${apiKey ? apiKey.substring(0, 10) + '...' : 'MISSING'}`);
+
   if (!apiKey) {
     console.error(`No API key found for company ID: ${companyId}`);
     throw new Error(`Missing API key for company ID: ${companyId}`);
@@ -27,8 +29,8 @@ async function whopFetch(endpoint: string, params: Record<string, string> = {}, 
   for (let i = 0; i < retries; i++) {
     try {
       const controller = new AbortController();
-      // Increased timeout to 45 seconds for potentially slow API responses
-      const timeoutId = setTimeout(() => controller.abort(), 45000);
+      // Reduced timeout to 15 seconds for better performance
+      const timeoutId = setTimeout(() => controller.abort(), 15000);
 
       console.log(`Fetching ${url.toString()} (attempt ${i + 1}/${retries})`);
       
@@ -43,6 +45,15 @@ async function whopFetch(endpoint: string, params: Record<string, string> = {}, 
       });
 
       clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        console.log(`Whop API Success - URL: ${url.toString()}, Items: ${Array.isArray(data) ? data.length : (data.data ? data.data.length : 'object')}`);
+        if (endpoint === '/payments' && data.data && data.data.length > 0) {
+          console.log('Sample payment user:', JSON.stringify(data.data[0].user));
+        }
+        return data;
+      }
 
       // Handle different error status codes differently
       if (!response.ok) {
@@ -129,9 +140,9 @@ async function whopFetch(endpoint: string, params: Record<string, string> = {}, 
 /**
  * Helper for cursor-based pagination with improved duplicate detection
  */
-async function whopFetchAll(endpoint: string, params: Record<string, string> = {}, companyId?: string, maxPages: number = 200) {
+async function whopFetchAll(endpoint: string, params: Record<string, string> = {}, companyId?: string, maxPages: number = 50, globalSeenIds?: Set<string>) {
   let allData: any[] = [];
-  const seenIds = new Set<string>(); // برای جلوگیری از duplicate
+  const seenIds = globalSeenIds || new Set<string>(); // برای جلوگیری از duplicate
   let cursor: string | null = null;
   let page = 1;
   let consecutiveEmptyPages = 0;
@@ -277,7 +288,7 @@ export async function getProductDetails(productId: string, companyId?: string) {
   return await whopFetch(`/products/${productId}`, {}, 3, companyId);
 }
 
-export async function getPayments(companyId: string = DEFAULT_COMPANY_ID, startDate?: string): Promise<WhopPayment[]> {
+export async function getPayments(companyId: string = DEFAULT_COMPANY_ID, startDate?: string, globalSeenIds?: Set<string>): Promise<WhopPayment[]> {
   console.log('Fetching payments...');
   const params: Record<string, string> = {
     company_id: companyId,
@@ -285,7 +296,7 @@ export async function getPayments(companyId: string = DEFAULT_COMPANY_ID, startD
   };
   
   let startTimestamp = 0;
-  let maxPages = 200;
+  let maxPages = 50;
 
   if (startDate) {
     try {
@@ -318,7 +329,7 @@ export async function getPayments(companyId: string = DEFAULT_COMPANY_ID, startD
   }
   
   // Fetch all payments
-  const payments = await whopFetchAll('/payments', params, companyId, maxPages);
+  const payments = await whopFetchAll('/payments', params, companyId, maxPages, globalSeenIds);
   console.log(`Fetched ${payments.length} payments`);
   
   // Always apply client-side filtering to ensure consistency
@@ -346,7 +357,7 @@ export async function getPayments(companyId: string = DEFAULT_COMPANY_ID, startD
   return payments as WhopPayment[];
 }
 
-export async function getMembers(companyId: string = DEFAULT_COMPANY_ID, startDate?: string): Promise<WhopMember[]> {
+export async function getMembers(companyId: string = DEFAULT_COMPANY_ID, startDate?: string, globalSeenIds?: Set<string>): Promise<WhopMember[]> {
   console.log('Fetching members...');
   const params: Record<string, string> = {
     company_id: companyId,
@@ -354,7 +365,7 @@ export async function getMembers(companyId: string = DEFAULT_COMPANY_ID, startDa
   };
   
   let startTimestamp = 0;
-  let maxPages = 200;
+  let maxPages = 50;
 
   if (startDate) {
     try {
@@ -385,7 +396,7 @@ export async function getMembers(companyId: string = DEFAULT_COMPANY_ID, startDa
   }
   
   // Fetch all members
-  const members = await whopFetchAll('/members', params, companyId, maxPages);
+  const members = await whopFetchAll('/members', params, companyId, maxPages, globalSeenIds);
   console.log(`Fetched ${members.length} members`);
   
   // Apply client-side filtering if we have a start date
@@ -413,7 +424,7 @@ export async function getMembers(companyId: string = DEFAULT_COMPANY_ID, startDa
   return members as WhopMember[];
 }
 
-export async function getMemberships(companyId: string = DEFAULT_COMPANY_ID, startDate?: string): Promise<WhopMembership[]> {
+export async function getMemberships(companyId: string = DEFAULT_COMPANY_ID, startDate?: string, globalSeenIds?: Set<string>): Promise<WhopMembership[]> {
   console.log('Fetching memberships...');
   const params: Record<string, string> = {
     company_id: companyId,
@@ -421,7 +432,7 @@ export async function getMemberships(companyId: string = DEFAULT_COMPANY_ID, sta
   };
   
   let startTimestamp = 0;
-  let maxPages = 200;
+  let maxPages = 50;
 
   if (startDate) {
     try {
@@ -453,7 +464,7 @@ export async function getMemberships(companyId: string = DEFAULT_COMPANY_ID, sta
   }
   
   // Fetch all memberships
-  const memberships = await whopFetchAll('/memberships', params, companyId, maxPages);
+  const memberships = await whopFetchAll('/memberships', params, companyId, maxPages, globalSeenIds);
   console.log(`Fetched ${memberships.length} memberships`);
   
   // Always apply client-side filtering to ensure consistency
@@ -499,29 +510,32 @@ export async function getAllUniqueUsers(
   payments: WhopPayment[],
   memberships: WhopMembership[],
   members: WhopMember[],
-  companyId: string = DEFAULT_COMPANY_ID
+  companyId: string = DEFAULT_COMPANY_ID,
+  explicitUserIds?: string[]
 ) {
-  console.log('Fetching all unique users from payments and memberships...');
+  console.log('Fetching all unique users...');
   
-  // Create a set of all user IDs from members
-  const memberUserIds = new Set(members.map(member => member.user?.id).filter(Boolean));
+  // Collect all unique user IDs
+  const uniqueUserIds = new Set<string>(explicitUserIds || []);
   
-  // Collect all unique user IDs from payments and memberships that aren't in members
-  const uniqueUserIds = new Set<string>();
-  
-  // Add user IDs from payments
-  payments.forEach(payment => {
-    if (payment.user?.id && !memberUserIds.has(payment.user.id)) {
-      uniqueUserIds.add(payment.user.id);
-    }
-  });
-  
-  // Add user IDs from memberships
-  memberships.forEach(membership => {
-    if (membership.user?.id && !memberUserIds.has(membership.user.id)) {
-      uniqueUserIds.add(membership.user.id);
-    }
-  });
+  if (!explicitUserIds) {
+    // Create a set of all user IDs from members
+    const memberUserIds = new Set(members.map(member => member.user?.id).filter(Boolean));
+    
+    // Add user IDs from payments
+    payments.forEach(payment => {
+      if (payment.user?.id && !memberUserIds.has(payment.user.id)) {
+        uniqueUserIds.add(payment.user.id);
+      }
+    });
+    
+    // Add user IDs from memberships
+    memberships.forEach(membership => {
+      if (membership.user?.id && !memberUserIds.has(membership.user.id)) {
+        uniqueUserIds.add(membership.user.id);
+      }
+    });
+  }
   
   console.log(`Found ${uniqueUserIds.size} unique users that need additional data fetching`);
   
@@ -530,21 +544,30 @@ export async function getAllUniqueUsers(
   let successCount = 0;
   let failureCount = 0;
   
-  for (const userId of uniqueUserIds) {
-    try {
-      // Add a small delay to prevent rate limiting
-      await delay(100);
-      
-      const userDetail = await getUser(userId, companyId);
-      if (userDetail) {
-        userDetails[userId] = userDetail;
-        successCount++;
-      } else {
+  // Parallelize user fetching with concurrency limit
+  const userIds = Array.from(uniqueUserIds);
+  const CONCURRENCY_LIMIT = 10;
+  
+  for (let i = 0; i < userIds.length; i += CONCURRENCY_LIMIT) {
+    const batch = userIds.slice(i, i + CONCURRENCY_LIMIT);
+    await Promise.all(batch.map(async (userId) => {
+      try {
+        const userDetail = await getUser(userId, companyId);
+        if (userDetail) {
+          userDetails[userId] = userDetail;
+          successCount++;
+        } else {
+          failureCount++;
+        }
+      } catch (error) {
+        console.error(`Failed to fetch details for user ${userId}:`, error);
         failureCount++;
       }
-    } catch (error) {
-      console.error(`Failed to fetch details for user ${userId}:`, error);
-      failureCount++;
+    }));
+    
+    // Small delay between batches to respect rate limits
+    if (i + CONCURRENCY_LIMIT < userIds.length) {
+      await delay(200);
     }
   }
   
