@@ -12,13 +12,14 @@ export const UnifiedUserModal: React.FC<UnifiedUserModalProps> = ({ user, onClos
   const ghlData = user.ghlData;
   const contact = ghlData?.contact || (ghlData?.id ? ghlData : null);
   const opportunities = ghlData?.opportunities || [];
+  const appointments = ghlData?.appointments || [];
   const totalGhlValue = opportunities.reduce((sum: number, opp: any) => sum + (Number(opp.monetaryValue) || 0), 0);
   
   const totalRevenue = (user.totalSpentWhop || 0) + (user.totalSpentElective || 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 bg-gray-900/60 backdrop-blur-md">
-      <div className="bg-[#F8FAFC] rounded-[2.5rem] shadow-2xl w-full max-w-[95vw] xl:max-w-[1400px] h-[90vh] overflow-hidden animate-in fade-in zoom-in duration-300 flex flex-col border border-white/20">
+      <div className="bg-[#F8FAFC] rounded-[2.5rem] shadow-2xl w-full max-w-[98vw] xl:max-w-[1600px] h-[90vh] overflow-hidden animate-in fade-in zoom-in duration-300 flex flex-col border border-white/20">
         
         {/* Top Navigation Bar */}
         <div className="flex items-center justify-between px-8 py-5 bg-white border-b border-gray-100">
@@ -106,7 +107,7 @@ export const UnifiedUserModal: React.FC<UnifiedUserModalProps> = ({ user, onClos
           </div>
 
           {/* Data Comparison Grid */}
-          <div className="grid grid-cols-1 xl:grid-cols-4 gap-8">
+          <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
             
             {/* Column 1: AI CEOS & CRM Info */}
             <div className="space-y-8">
@@ -317,6 +318,53 @@ export const UnifiedUserModal: React.FC<UnifiedUserModalProps> = ({ user, onClos
                 ) : (
                   <div className="bg-white p-8 rounded-3xl border border-dashed border-gray-200 text-center">
                     <p className="text-xs text-gray-400 font-medium">No opportunities</p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Column 5: GHL Appointments */}
+            <div className="space-y-4">
+              <h3 className="text-sm font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
+                <Calendar className="w-4 h-4 text-blue-500" /> GHL Appointments
+              </h3>
+              <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
+                {appointments.length > 0 ? (
+                  appointments.map((appt: any) => (
+                    <div key={appt.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:border-blue-200 transition-all">
+                      <div className="flex justify-between items-start mb-2">
+                        <p className="font-black text-gray-900 text-sm leading-tight">{appt.title}</p>
+                        <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${
+                          appt.appointmentStatus === 'confirmed' ? 'bg-emerald-100 text-emerald-700' :
+                          appt.appointmentStatus === 'new' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
+                        }`}>
+                          {appt.appointmentStatus}
+                        </span>
+                      </div>
+                      <div className="space-y-2">
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-3 h-3 text-gray-400" />
+                          <span className="text-[10px] font-bold text-gray-600">
+                            {new Date(appt.startTime).toLocaleString()}
+                          </span>
+                        </div>
+                        <div className="pt-2 border-t border-gray-50 flex justify-between items-center">
+                          <div className="flex flex-col">
+                            <span className="text-[8px] text-gray-400 font-bold uppercase">Assigned To</span>
+                            <span className="text-[10px] font-black text-gray-600">
+                              {(() => {
+                                const assignedUser = ghlData.ghlUsers?.find((u: any) => u.id === appt.assignedUserId);
+                                return assignedUser ? (assignedUser.name || `${assignedUser.firstName} ${assignedUser.lastName}`) : 'Unassigned';
+                              })()}
+                            </span>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  ))
+                ) : (
+                  <div className="bg-white p-8 rounded-3xl border border-dashed border-gray-200 text-center">
+                    <p className="text-xs text-gray-400 font-medium">No appointments</p>
                   </div>
                 )}
               </div>

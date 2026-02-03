@@ -150,7 +150,7 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
       </div>
 
       <div className="overflow-x-auto">
-        <div className="min-w-[1600px]">
+        <div className="min-w-[1750px]">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50/50">
@@ -166,6 +166,7 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Email</th>
                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Value</th>
                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Status</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Bookings</th>
                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Source</th>
                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Stage</th>
                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Pipeline</th>
@@ -217,7 +218,9 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                 const opportunities = ghlData?.opportunities || [];
                 const activeOpp = opportunities.find((o: any) => o.status === 'open') || opportunities[0];
                 const totalValue = opportunities.reduce((sum: number, opp: any) => sum + (Number(opp.monetaryValue) || 0), 0);
-                
+                const appointments = ghlData?.appointments || [];
+                const latestAppt = appointments.length > 0 ? [...appointments].sort((a: any, b: any) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())[0] : null;
+
                 return (
                   <tr 
                     key={user.email} 
@@ -259,6 +262,24 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                         }`}>
                           {activeOpp.status}
                         </span>
+                      ) : <span className="text-xs text-gray-400">-</span>}
+                    </td>
+                    <td className="px-6 py-5">
+                      {appointments.length > 0 ? (
+                        <div className="flex flex-col">
+                          <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase w-fit ${
+                            latestAppt?.appointmentStatus === 'confirmed' ? 'bg-emerald-100 text-emerald-700' :
+                            latestAppt?.appointmentStatus === 'new' ? 'bg-blue-100 text-blue-700' : 'bg-gray-100 text-gray-500'
+                          }`}>
+                            {latestAppt?.appointmentStatus}
+                          </span>
+                          <span className="text-[9px] text-gray-400 font-bold mt-1">
+                            {new Date(latestAppt?.startTime).toLocaleDateString()}
+                          </span>
+                          {appointments.length > 1 && (
+                            <span className="text-[8px] text-blue-400 font-black uppercase mt-0.5">{appointments.length} Total</span>
+                          )}
+                        </div>
                       ) : <span className="text-xs text-gray-400">-</span>}
                     </td>
                     <td className="px-6 py-5">

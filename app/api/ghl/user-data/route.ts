@@ -36,6 +36,16 @@ export async function GET(request: NextRequest) {
     } catch (err) {
       console.error('Error fetching GHL opportunities:', err);
     }
+
+    // 2.5 Fetch appointments for this contact
+    let appointments = [];
+    try {
+      const apptData = await fetchGhlData(`/contacts/${contact.id}/appointments`, accessToken);
+      appointments = apptData.events || [];
+      console.log(`GHL Appointments found: ${appointments.length}`);
+    } catch (err) {
+      console.error('Error fetching GHL appointments:', err);
+    }
     
     // 3. Fetch pipelines to get stage names
     let pipelines = [];
@@ -68,6 +78,7 @@ export async function GET(request: NextRequest) {
     const responseData = {
       contact,
       opportunities,
+      appointments,
       pipelines,
       customFieldsSchema: customFields,
       ghlUsers

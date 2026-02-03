@@ -838,9 +838,22 @@ export async function getUnifiedUserData(options: {
                   const oppData = oppResponse.ok ? await oppResponse.json() : { opportunities: [] };
                   const opportunities = Array.isArray(oppData.opportunities) ? oppData.opportunities : [];
 
+                  // Fetch appointments for this contact
+                  const apptResponse = await fetch(`https://services.leadconnectorhq.com/contacts/${contact.id}/appointments`, {
+                    headers: {
+                      'Authorization': `Bearer ${currentGhlToken}`,
+                      'Version': '2021-07-28',
+                      'Accept': 'application/json',
+                      'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+                    }
+                  });
+                  const apptData = apptResponse.ok ? await apptResponse.json() : { events: [] };
+                  const appointments = Array.isArray(apptData.events) ? apptData.events : [];
+
                   user.ghlData = {
                     contact,
                     opportunities: opportunities,
+                    appointments: appointments,
                     customFieldsSchema: customFields,
                     ghlUsers: ghlUsers,
                     pipelines: pipelines
