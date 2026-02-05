@@ -69,13 +69,13 @@ export async function syncWhop() {
       }
     });
 
-    memberships.forEach(m => {
+    memberships.forEach((m: any) => {
       const email = m.user?.email;
       if (email && !usersMap.has(email.toLowerCase())) {
         usersMap.set(email.toLowerCase(), {
           email: email.toLowerCase(),
           name: m.user?.name,
-          username: m.username || m.user?.username,
+          username: m.user?.username,
           whopId: m.user?.id
         });
       }

@@ -323,3 +323,37 @@ export async function getUnifiedUserData(options: {
     };
   }
 }
+
+export async function getGhlContactByEmail(email: string) {
+  try {
+    const contact = await prisma.ghlContact.findFirst({
+      where: { email },
+      include: {
+        opportunities: true,
+        appointments: true
+      }
+    });
+
+    if (!contact) {
+      return { success: true, contact: null };
+    }
+
+    return {
+      success: true,
+      contact: {
+        id: contact.ghlId,
+        firstName: contact.firstName,
+        lastName: contact.lastName,
+        email: contact.email,
+        phone: contact.phone,
+        tags: contact.tags,
+        dateAdded: contact.createdAt.toISOString(),
+        opportunities: contact.opportunities,
+        appointments: contact.appointments
+      }
+    };
+  } catch (error: any) {
+    console.error('Error fetching GHL contact by email:', error);
+    return { success: false, error: error.message };
+  }
+}

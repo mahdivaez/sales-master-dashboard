@@ -18,9 +18,7 @@ export default function GhlMergeTestPage() {
 
       const response = await getUnifiedUserData({
         search: email,
-        limit: 1,
-        ghlToken,
-        ghlLocationId
+        limit: 1
       });
 
       if (response.success && response.data) {

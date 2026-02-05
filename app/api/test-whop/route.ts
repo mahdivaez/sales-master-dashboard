@@ -19,7 +19,7 @@ export async function GET() {
         (user.whopData?.memberships && user.whopData.memberships.length > 0)
       ).length;
       const usersWithSheetData = data.filter(user => user.sheetData && user.sheetData.length > 0).length;
-      const usersWithEnhancedData = data.filter(user => user.whopData?.enhancedUserData).length;
+      const usersWithEnhancedData = 0; // Property removed from data structure
       
       // Calculate overlap
       const usersInBothSources = data.filter(user =>
@@ -38,7 +38,7 @@ export async function GET() {
           usersWithSheetData,
           usersWithEnhancedData,
           usersInBothSources,
-          percentageWithEnhancedData: usersWithWhopData > 0 ? (usersWithEnhancedData / usersWithWhopData * 100).toFixed(2) + '%' : '0%',
+          percentageWithEnhancedData: '0%',
           percentageInBothSources: totalUsers > 0 ? (usersInBothSources / totalUsers * 100).toFixed(2) + '%' : '0%'
         },
         // Include a sample of users for inspection
@@ -50,7 +50,7 @@ export async function GET() {
                       (user.whopData?.payments && user.whopData.payments.length > 0) ||
                       (user.whopData?.memberships && user.whopData.memberships.length > 0),
           hasSheetData: user.sheetData && user.sheetData.length > 0,
-          hasEnhancedData: !!user.whopData?.enhancedUserData,
+          hasEnhancedData: false,
           totalSpentWhop: user.totalSpentWhop || 0,
           totalSpentSheet: user.totalSpentSheet || 0
         }))
@@ -59,7 +59,7 @@ export async function GET() {
       return NextResponse.json({
         success: false,
         error: result.error,
-        errorDetails: result.errorDetails || 'No additional error details available'
+        errorDetails: 'No additional error details available'
       }, { status: 500 });
     }
   } catch (error: any) {
