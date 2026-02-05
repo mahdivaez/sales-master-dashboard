@@ -3,11 +3,11 @@
 import { useState, useEffect, useCallback } from 'react';
 import { getUnifiedUserData } from './actions';
 import { UnifiedUserTable } from '@/components/UnifiedUserTable';
-import { ElectiveUpload } from '@/components/ElectiveUpload';
-import { Loader2, AlertCircle, RefreshCw, Search, LayoutDashboard, Upload, Building2 } from 'lucide-react';
+import { Loader2, AlertCircle, RefreshCw, Search, LayoutDashboard, Building2, Database } from 'lucide-react';
 import { DateRange } from 'react-day-picker';
 import { DateRangePicker } from '@/components/DateRangePicker';
 import { COMPANIES } from '@/lib/config';
+import Link from 'next/link';
 
 export default function UnifiedDatabasePage() {
   const [loading, setLoading] = useState(false);
@@ -18,36 +18,17 @@ export default function UnifiedDatabasePage() {
   const [hasMore, setHasMore] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [dateRange, setDateRange] = useState<DateRange | undefined>();
-  const [isInitialLoad, setIsInitialLoad] = useState(true);
-  const [electiveData, setElectiveData] = useState<Record<string, any[]>>({});
-  const [hasUploadedCsv, setHasUploadedCsv] = useState(false);
   const [selectedCompanyId, setSelectedCompanyId] = useState<string>('all');
 
-  const fetchData = useCallback(async (currentPage = 1, search = '', currentElectiveDataMap = electiveData, companyId = selectedCompanyId) => {
-    // Check if we have any elective data at all
-    const hasAnyElectiveData = Object.values(currentElectiveDataMap).some(data => data.length > 0);
-    if (!hasUploadedCsv && !hasAnyElectiveData) return;
-    
+  const fetchData = useCallback(async (currentPage = 1, search = '', companyId = selectedCompanyId) => {
     if (currentPage === 1) setLoading(true);
     setError(null);
     try {
       const limit = 50;
       const offset = (currentPage - 1) * limit;
       
-      // Default to last 12 months if no search to speed up initial load
-      const startDate = dateRange?.from ? dateRange.from.toISOString() : (search ? undefined : new Date(new Date().setMonth(new Date().getMonth() - 12)).toISOString());
+      const startDate = dateRange?.from ? dateRange.from.toISOString() : undefined;
       const endDate = dateRange?.to ? dateRange.to.toISOString() : undefined;
-
-      const ghlToken = typeof window !== 'undefined' ? localStorage.getItem('ghl_access_token') || undefined : undefined;
-      const ghlLocationId = typeof window !== 'undefined' ? localStorage.getItem('ghl_location_id') || undefined : undefined;
-
-      // Flatten elective data for the action, but we could also filter it here
-      let flattenedElectiveData: any[] = [];
-      if (companyId === 'all') {
-        flattenedElectiveData = Object.values(currentElectiveDataMap).flat();
-      } else {
-        flattenedElectiveData = currentElectiveDataMap[companyId] || [];
-      }
 
       const result = await getUnifiedUserData({
         limit,
@@ -55,9 +36,6 @@ export default function UnifiedDatabasePage() {
         search,
         startDate,
         endDate,
-        ghlToken,
-        ghlLocationId,
-        electiveData: flattenedElectiveData,
         companyId: companyId === 'all' ? undefined : companyId
       });
 
@@ -80,29 +58,13 @@ export default function UnifiedDatabasePage() {
   }, [dateRange, selectedCompanyId]);
 
   useEffect(() => {
-    if (hasUploadedCsv) {
-      fetchData(1, searchTerm, electiveData, selectedCompanyId);
-    }
-    if (isInitialLoad) {
-      setIsInitialLoad(false);
-    }
-  }, [searchTerm, dateRange, fetchData, isInitialLoad, hasUploadedCsv, selectedCompanyId]);
+    fetchData(1, searchTerm, selectedCompanyId);
+  }, [searchTerm, dateRange, fetchData, selectedCompanyId]);
 
   const loadMore = () => {
     const nextPage = page + 1;
     setPage(nextPage);
-    fetchData(nextPage, searchTerm, electiveData);
-  };
-
-  const handleElectiveDataLoaded = (data: any[], companyId: string) => {
-    setElectiveData(prev => {
-      const newData = { ...prev, [companyId]: data };
-      // Check if we have any data now
-      const hasAnyData = Object.values(newData).some(d => d.length > 0);
-      setHasUploadedCsv(hasAnyData);
-      return newData;
-    });
-    setPage(1);
+    fetchData(nextPage, searchTerm);
   };
 
   return (
@@ -116,9 +78,13 @@ export default function UnifiedDatabasePage() {
               </div>
               <h1 className="text-4xl font-black text-gray-900 tracking-tight">Unified Database</h1>
             </div>
-            <p className="text-gray-500 font-medium">Cross-referencing AI CEOS members with Google Sheets records</p>
+            <p className="text-gray-500 font-medium">Data fetched directly from Supabase Database</p>
           </div>
           <div className="flex items-center gap-4">
+            <Link href="/sync" className="flex items-center gap-2 px-4 py-2 bg-green-600 text-white rounded-xl font-bold hover:bg-green-700 transition-all shadow-sm">
+              <Database className="w-4 h-4" />
+              Sync Database
+            </Link>
             <div className="flex items-center gap-2 bg-white border border-gray-200 rounded-xl px-3 py-2 shadow-sm">
               <Building2 className="w-4 h-4 text-gray-400" />
               <select
@@ -149,35 +115,15 @@ export default function UnifiedDatabasePage() {
               className="flex items-center gap-2 px-6 py-3 bg-white border border-gray-200 rounded-2xl font-bold text-gray-700 hover:bg-gray-50 transition-all shadow-sm disabled:opacity-50"
             >
               <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-              Refresh Data
+              Refresh
             </button>
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-10">
-          {COMPANIES.map(company => (
-            <ElectiveUpload 
-              key={company.id}
-              companyName={company.name}
-              onDataLoaded={(data) => handleElectiveDataLoaded(data, company.id)} 
-            />
-          ))}
-        </div>
-
-        {!hasUploadedCsv ? (
-          <div className="flex flex-col items-center justify-center py-32 bg-white rounded-3xl shadow-xl border border-gray-100">
-            <div className="w-20 h-20 bg-blue-50 rounded-full flex items-center justify-center mb-6">
-              <Upload className="w-10 h-10 text-blue-600" />
-            </div>
-            <h3 className="text-2xl font-black text-gray-900 mb-2">Waiting for CSV Upload</h3>
-            <p className="text-gray-500 font-medium max-w-md text-center">
-              Please upload your Elective CSV file above to start fetching and merging data from other sources.
-            </p>
-          </div>
-        ) : loading && users.length === 0 ? (
+        {loading && users.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-32 bg-white rounded-3xl shadow-xl border border-gray-100">
             <Loader2 className="w-12 h-12 text-blue-600 animate-spin mb-4" />
-            <p className="text-gray-500 font-bold animate-pulse">Merging data sources...</p>
+            <p className="text-gray-500 font-bold animate-pulse">Loading from database...</p>
           </div>
         ) : error ? (
           <div className="bg-red-50 border border-red-100 rounded-3xl p-8 flex items-center gap-6">
@@ -194,6 +140,15 @@ export default function UnifiedDatabasePage() {
                 Try Again
               </button>
             </div>
+          </div>
+        ) : users.length === 0 ? (
+          <div className="flex flex-col items-center justify-center py-32 bg-white rounded-3xl shadow-xl border border-gray-100">
+            <Database className="w-12 h-12 text-gray-300 mb-4" />
+            <h3 className="text-xl font-bold text-gray-900">No data found in database</h3>
+            <p className="text-gray-500 mt-2">Please run the synchronization on the Sync page.</p>
+            <Link href="/sync" className="mt-6 px-6 py-2 bg-blue-600 text-white rounded-xl font-bold">
+              Go to Sync Page
+            </Link>
           </div>
         ) : (
           <>

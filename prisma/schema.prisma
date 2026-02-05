@@ -1,0 +1,226 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model Company {
+  id                          String   @id
+  name                        String
+  whopCompanyId               String?
+  whopApiKey                  String?
+  ghlLocationId               String?
+  ghlAccessToken              String?
+  googleSheetCashCollectedUrl String?
+  googleSheetPipelineUrl      String?
+  createdAt                   DateTime @default(now())
+  updatedAt                   DateTime @updatedAt
+
+  users       User[]
+  payments    Payment[]
+  memberships Membership[]
+  ghlContacts GhlContact[]
+  sheetData   SheetData[]
+  electiveData ElectiveData[]
+  ghlPipelines GhlPipeline[]
+  ghlUsers     GhlUser[]
+}
+
+model User {
+  id        String   @id @default(cuid())
+  whopId    String?
+  email     String
+  name      String?
+  username  String?
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  payments    Payment[]
+  memberships Membership[]
+  ghlContact  GhlContact?
+  sheetData   SheetData[]
+  electiveData ElectiveData[]
+
+  @@unique([email, companyId])
+}
+
+model Payment {
+  id               String   @id
+  whopId           String?
+  amount           Float
+  amountBeforeFees Float
+  refundedAmount   Float    @default(0)
+  status           String
+  substatus        String?
+  currency         String   @default("usd")
+  createdAt        DateTime
+  updatedAt        DateTime @updatedAt
+  
+  userId           String
+  user             User     @relation(fields: [userId], references: [id])
+  companyId        String
+  company          Company  @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, createdAt])
+}
+
+model Membership {
+  id        String   @id
+  whopId    String?
+  status    String
+  productName String?
+  createdAt DateTime
+  updatedAt DateTime @updatedAt
+
+  userId    String
+  user      User     @relation(fields: [userId], references: [id])
+  companyId String
+  company   Company  @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, createdAt])
+}
+
+model GhlContact {
+  id         String   @id
+  ghlId      String
+  email      String
+  firstName  String?
+  lastName   String?
+  phone      String?
+  tags       String[]
+  locationId String
+  createdAt  DateTime
+  updatedAt  DateTime @updatedAt
+
+  userId     String?  @unique
+  user       User?    @relation(fields: [userId], references: [id])
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id])
+
+  opportunities GhlOpportunity[]
+  appointments  GhlAppointment[]
+
+  @@unique([ghlId, companyId])
+}
+
+model GhlOpportunity {
+  id            String   @id
+  ghlId         String
+  name          String?
+  monetaryValue Float?
+  status        String?
+  pipelineId    String?
+  pipelineStageId String?
+  assignedTo    String?
+  createdAt     DateTime
+  updatedAt     DateTime @updatedAt
+
+  contactId     String
+  contact       GhlContact @relation(fields: [contactId], references: [id])
+
+  @@unique([ghlId, contactId])
+}
+
+model GhlAppointment {
+  id            String   @id
+  ghlId         String
+  title         String?
+  status        String?
+  startTime     DateTime
+  endTime       DateTime?
+  assignedTo    String?
+  createdAt     DateTime
+  updatedAt     DateTime @updatedAt
+
+  contactId     String
+  contact       GhlContact @relation(fields: [contactId], references: [id])
+
+  @@unique([ghlId, contactId])
+}
+
+model GhlPipeline {
+  id         String   @id @default(cuid())
+  ghlId      String
+  name       String
+  locationId String
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id])
+  stages     GhlPipelineStage[]
+
+  @@unique([ghlId, companyId])
+}
+
+model GhlPipelineStage {
+  id         String   @id
+  ghlId      String
+  name       String
+  pipelineId String
+  pipeline   GhlPipeline @relation(fields: [pipelineId], references: [id])
+
+  @@unique([ghlId, pipelineId])
+}
+
+model GhlUser {
+  id         String   @id
+  ghlId      String
+  name       String
+  email      String?
+  companyId  String
+  company    Company  @relation(fields: [companyId], references: [id])
+
+  @@unique([ghlId, companyId])
+}
+
+model SheetData {
+  id          String   @id @default(cuid())
+  date        DateTime
+  type        String?
+  contactName String?
+  contactEmail String
+  altEmail    String?
+  amount      Float
+  portal      String?
+  platform    String?
+  recurring   String?
+  closer      String?
+  notes       String?
+  leadFi      String?
+  bookingName String?
+  setter      String?
+  manualCloser String?
+  csm         String?
+  
+  userId      String?
+  user        User?    @relation(fields: [userId], references: [id])
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+  
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([contactEmail, companyId])
+}
+
+model ElectiveData {
+  id            String   @id @default(cuid())
+  saleDate      DateTime
+  customerName  String?
+  customerEmail String
+  netAmount     Float
+  
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id])
+  companyId     String
+  company       Company  @relation(fields: [companyId], references: [id])
+  
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([customerEmail, companyId])
+}

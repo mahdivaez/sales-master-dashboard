@@ -1,18 +1,21 @@
 'use client';
 
 import React, { useState } from 'react';
-import { Upload, FileText, X, CheckCircle2, AlertCircle } from 'lucide-react';
+import { Upload, FileText, X, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
 import Papa from 'papaparse';
 
 interface ElectiveUploadProps {
   onDataLoaded: (data: any[]) => void;
   companyName?: string;
+  companyId: string;
 }
 
-export const ElectiveUpload: React.FC<ElectiveUploadProps> = ({ onDataLoaded, companyName }) => {
+export const ElectiveUpload: React.FC<ElectiveUploadProps> = ({ onDataLoaded, companyName, companyId }) => {
   const [fileName, setFileName] = useState<string | null>(null);
   const [isParsing, setIsParsing] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState(false);
 
   const handleFileUpload = (event: React.ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
@@ -25,12 +28,13 @@ export const ElectiveUpload: React.FC<ElectiveUploadProps> = ({ onDataLoaded, co
 
     setFileName(file.name);
     setError(null);
+    setSuccess(false);
     setIsParsing(true);
 
     Papa.parse(file, {
       header: true,
       skipEmptyLines: true,
-      complete: (results) => {
+      complete: async (results) => {
         setIsParsing(false);
         if (results.errors.length > 0) {
           console.error('CSV Parsing Errors:', results.errors);
@@ -38,23 +42,34 @@ export const ElectiveUpload: React.FC<ElectiveUploadProps> = ({ onDataLoaded, co
           return;
         }
 
-        // Map the CSV data to the expected format
-        // Sale Date, Adjustment Date, Order ID, Customer Id, Customer, Email, State, Country, City, Street, Postal Code, Checkout Name, Type, Term, Currency, Order Total, Fees Total, Net Amount, Amount Collected, Tax Amount, Status
         const mappedData = results.data.map((row: any) => ({
           saleDate: row['Sale Date'],
           customerEmail: row['Email']?.toLowerCase().trim(),
           customerName: row['Customer'],
-          checkoutName: row['Checkout Name'],
-          type: row['Type'],
-          term: row['Term'],
-          feesTotal: parseFloat(row['Fees Total']?.replace(/[^0-9.-]+/g, '')) || 0,
           netAmount: parseFloat(row['Net Amount']?.replace(/[^0-9.-]+/g, '')) || 0,
-          status: row['Status'],
-          orderTotal: parseFloat(row['Order Total']?.replace(/[^0-9.-]+/g, '')) || 0,
-          companyName: companyName // Tag data with company name
         })).filter(item => item.customerEmail);
 
-        onDataLoaded(mappedData);
+        // Save to Database
+        setIsSaving(true);
+        try {
+          const response = await fetch('/api/elective/save', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ data: mappedData, companyId })
+          });
+
+          if (response.ok) {
+            setSuccess(true);
+            onDataLoaded(mappedData);
+          } else {
+            const errData = await response.json();
+            setError(errData.error || 'Failed to save data to database.');
+          }
+        } catch (err) {
+          setError('An error occurred while saving to database.');
+        } finally {
+          setIsSaving(false);
+        }
       },
       error: (err) => {
         setIsParsing(false);
@@ -66,6 +81,7 @@ export const ElectiveUpload: React.FC<ElectiveUploadProps> = ({ onDataLoaded, co
   const clearFile = () => {
     setFileName(null);
     setError(null);
+    setSuccess(false);
     onDataLoaded([]);
   };
 
@@ -77,7 +93,7 @@ export const ElectiveUpload: React.FC<ElectiveUploadProps> = ({ onDataLoaded, co
             <Upload className="w-5 h-5 text-blue-600" />
             Upload Elective CSV {companyName ? `for ${companyName}` : ''}
           </h3>
-          <p className="text-xs text-gray-500 font-medium">Merge Elective sales data with existing records</p>
+          <p className="text-xs text-gray-500 font-medium">Save Elective sales data to database</p>
         </div>
         {fileName && (
           <button 
@@ -99,14 +115,14 @@ export const ElectiveUpload: React.FC<ElectiveUploadProps> = ({ onDataLoaded, co
           <input type="file" className="hidden" accept=".csv" onChange={handleFileUpload} />
         </label>
       ) : (
-        <div className="flex items-center gap-4 p-4 bg-blue-50 rounded-xl border border-blue-100">
-          <div className="w-10 h-10 bg-blue-600 rounded-lg flex items-center justify-center text-white">
-            <CheckCircle2 className="w-6 h-6" />
+        <div className={`flex items-center gap-4 p-4 rounded-xl border ${success ? 'bg-green-50 border-green-100' : 'bg-blue-50 border-blue-100'}`}>
+          <div className={`w-10 h-10 rounded-lg flex items-center justify-center text-white ${success ? 'bg-green-600' : 'bg-blue-600'}`}>
+            {isSaving || isParsing ? <Loader2 className="w-6 h-6 animate-spin" /> : <CheckCircle2 className="w-6 h-6" />}
           </div>
           <div className="flex-1">
             <p className="text-sm font-bold text-gray-900">{fileName}</p>
-            <p className="text-[10px] text-blue-600 font-black uppercase tracking-wider">
-              {isParsing ? 'Parsing data...' : 'Data loaded successfully'}
+            <p className={`text-[10px] font-black uppercase tracking-wider ${success ? 'text-green-600' : 'text-blue-600'}`}>
+              {isParsing ? 'Parsing data...' : isSaving ? 'Saving to database...' : 'Data saved successfully'}
             </p>
           </div>
         </div>
