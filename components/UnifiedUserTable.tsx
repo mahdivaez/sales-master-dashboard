@@ -1,21 +1,80 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
-import { Search, Filter, ExternalLink, Mail, User, Database, Sheet, ArrowUp, ArrowDown, ArrowUpDown, Zap, CreditCard, Phone, Tag, Clock, Calendar } from 'lucide-react';
+import React, { useState, useEffect, useCallback } from 'react';
+import { Search, Filter, ExternalLink, Mail, User, Database, Sheet, ArrowUp, ArrowDown, ArrowUpDown, Zap, CreditCard, Phone, Tag, Clock, Calendar, ChevronDown, Check, X, Pencil } from 'lucide-react';
 import { UnifiedUserModal } from './UnifiedUserModal';
 
 interface UnifiedUserTableProps {
   users: any[];
 }
 
-type SortField = 'name' | 'totalSpentWhop' | 'totalSpentSheet' | 'totalSpentElective' | 'lastPaymentDate';
+type SortField = 'name' | 'totalSpentWhop' | 'totalSpentSheet' | 'totalSpentElective' | 'totalSpentFanbasis' | 'lastPaymentDate';
 type SortOrder = 'asc' | 'desc' | null;
 
-export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => {
+interface Closer {
+  id: string;
+  name: string;
+  isActive: boolean;
+}
+
+interface Setter {
+  id: string;
+  name: string;
+  isActive: boolean;
+}
+
+export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users: initialUsers }) => {
+  const [users, setUsers] = useState(initialUsers);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedUser, setSelectedUser] = useState<any | null>(null);
   const [sortField, setSortField] = useState<SortField | null>('lastPaymentDate');
   const [sortOrder, setSortOrder] = useState<SortOrder>('desc');
+  const [closersList, setClosersList] = useState<Closer[]>([]);
+  const [settersList, setSettersList] = useState<Setter[]>([]);
+  const [editingCell, setEditingCell] = useState<{ userId: string; field: 'closer' | 'setter'; sheetDataId: string } | null>(null);
+  const [localValues, setLocalValues] = useState<{ [key: string]: { closer?: string; setter?: string } }>({});
+  const [saving, setSaving] = useState<{ [key: string]: boolean }>({});
+
+  // Fetch closers and setters from API on mount
+  useEffect(() => {
+    const fetchCloserSetter = async () => {
+      try {
+        const [closersRes, settersRes] = await Promise.all([
+          fetch('/api/closers?active_only=true'),
+          fetch('/api/setters?active_only=true'),
+        ]);
+        
+        const closersData = await closersRes.json();
+        const settersData = await settersRes.json();
+        
+        if (closersData.closers) {
+          setClosersList(closersData.closers);
+        }
+        if (settersData.setters) {
+          setSettersList(settersData.setters);
+        }
+      } catch (error) {
+        console.error('Error fetching closers/setters:', error);
+      }
+    };
+    fetchCloserSetter();
+  }, []);
+
+  // Update local values when initialUsers change
+  useEffect(() => {
+    const newLocalValues: { [key: string]: { closer?: string; setter?: string } } = {};
+    initialUsers.forEach(user => {
+      if (user.sheetData && user.sheetData.length > 0) {
+        const latestSheetData = user.sheetData[0];
+        newLocalValues[user.email] = {
+          closer: latestSheetData.closer || '',
+          setter: latestSheetData.setter || '',
+        };
+      }
+    });
+    setLocalValues(newLocalValues);
+    setUsers(initialUsers);
+  }, [initialUsers]);
 
   const handleSort = (field: SortField) => {
     if (sortField === field) {
@@ -35,19 +94,22 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
       (user.name && user.name.toLowerCase().includes(searchTerm.toLowerCase())) ||
       (user.username && user.username.toLowerCase().includes(searchTerm.toLowerCase()));
     
-    const hasWhopActivity = (user.totalSpentWhop > 0) || 
-                           (user.whopData?.payments && user.whopData.payments.length > 0) || 
+    const hasWhopActivity = (user.totalSpentWhop > 0) ||
+                           (user.whopData?.payments && user.whopData.payments.length > 0) ||
                            (user.whopData?.memberships && user.whopData.memberships.length > 0);
                         
-    const hasSheetActivity = (user.totalSpentSheet > 0) || 
+    const hasSheetActivity = (user.totalSpentSheet > 0) ||
                              (user.sheetData && user.sheetData.length > 0);
 
     const hasElectiveActivity = (user.totalSpentElective > 0) ||
                                 (user.electiveData && user.electiveData.length > 0);
 
+    const hasFanbasisActivity = (user.totalSpentFanbasis > 0) ||
+                                (user.fanbasisData && user.fanbasisData.length > 0);
+
     const hasGhlActivity = !!user.ghlData;
 
-    return matchesSearch && (hasWhopActivity || hasSheetActivity || hasElectiveActivity || hasGhlActivity);
+    return matchesSearch && (hasWhopActivity || hasSheetActivity || hasElectiveActivity || hasFanbasisActivity || hasGhlActivity);
   });
 
   const sortedUsers = [...filteredUsers].sort((a, b) => {
@@ -66,6 +128,157 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
     if (sortField !== field) return <ArrowUpDown className="w-3 h-3 ml-1 opacity-30" />;
     if (sortOrder === 'asc') return <ArrowUp className="w-3 h-3 ml-1 text-blue-600" />;
     return <ArrowDown className="w-3 h-3 ml-1 text-blue-600" />;
+  };
+
+  const handleEditClick = (user: any, field: 'closer' | 'setter') => {
+    if (user.sheetData && user.sheetData.length > 0) {
+      setEditingCell({ userId: user.email, field, sheetDataId: user.sheetData[0].id });
+    }
+  };
+
+  const handleValueChange = (userId: string, field: 'closer' | 'setter', value: string) => {
+    setLocalValues(prev => ({
+      ...prev,
+      [userId]: {
+        ...prev[userId],
+        [field]: value,
+      },
+    }));
+  };
+
+  const handleSave = async (userId: string, field: 'closer' | 'setter', sheetDataId: string) => {
+    const value = localValues[userId]?.[field];
+    if (!value || !sheetDataId) return;
+
+    setSaving(prev => ({ ...prev, [sheetDataId]: true }));
+
+    try {
+      const response = await fetch('/api/sheet-data', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          id: sheetDataId,
+          [field]: value,
+        }),
+      });
+
+      if (response.ok) {
+        setEditingCell(null);
+        // Update the local users state
+        setUsers(prevUsers => 
+          prevUsers.map(user => {
+            if (user.email === userId && user.sheetData) {
+              return {
+                ...user,
+                sheetData: user.sheetData.map((sheet: any) => 
+                  sheet.id === sheetDataId 
+                    ? { ...sheet, [field]: value }
+                    : sheet
+                ),
+              };
+            }
+            return user;
+          })
+        );
+      }
+    } catch (error) {
+      console.error('Error saving:', error);
+    } finally {
+      setSaving(prev => ({ ...prev, [sheetDataId]: false }));
+    }
+  };
+
+  const handleCancel = () => {
+    setEditingCell(null);
+    // Reset local values to original
+    const newLocalValues: { [key: string]: { closer?: string; setter?: string } } = {};
+    users.forEach(user => {
+      if (user.sheetData && user.sheetData.length > 0) {
+        const latestSheetData = user.sheetData[0];
+        newLocalValues[user.email] = {
+          closer: latestSheetData.closer || '',
+          setter: latestSheetData.setter || '',
+        };
+      }
+    });
+    setLocalValues(newLocalValues);
+  };
+
+  const DropdownCell = ({
+    user,
+    field,
+    label
+  }: {
+    user: any;
+    field: 'closer' | 'setter';
+    label: string;
+  }) => {
+    const isEditing = editingCell?.userId === user.email && editingCell?.field === field;
+    const currentValue = localValues[user.email]?.[field] || '';
+    const sheetDataId = user.sheetData?.[0]?.id;
+    const isSaving = saving[sheetDataId];
+
+    // Color scheme based on field type
+    const fieldColors = field === 'closer'
+      ? { bg: 'bg-blue-50', border: 'border-blue-200', text: 'text-blue-700', ring: 'ring-blue-200', hoverBg: 'hover:bg-blue-50', iconBg: 'bg-blue-100', iconText: 'text-blue-600' }
+      : { bg: 'bg-green-50', border: 'border-green-200', text: 'text-green-700', ring: 'ring-green-200', hoverBg: 'hover:bg-green-50', iconBg: 'bg-green-100', iconText: 'text-green-600' };
+
+    if (!user.sheetData || user.sheetData.length === 0) {
+      return <span className="text-xs text-gray-400">-</span>;
+    }
+
+    if (isEditing) {
+      const options = field === 'closer' ? closersList : settersList;
+      return (
+        <div className="flex items-center gap-2">
+          <select
+            value={currentValue}
+            onChange={(e) => handleValueChange(user.email, field, e.target.value)}
+            className={`text-sm font-bold border-2 ${fieldColors.border} rounded-xl px-4 py-2.5 focus:ring-4 ${fieldColors.ring} focus:border-${field === 'closer' ? 'blue' : 'green'}-500 outline-none bg-white min-w-[160px] max-w-[180px] shadow-sm cursor-pointer`}
+            autoFocus
+          >
+            <option value="">Select {label}...</option>
+            {options.map((opt: any) => (
+              <option key={opt.id} value={opt.name}>{opt.name}</option>
+            ))}
+          </select>
+          <button
+            onClick={() => handleSave(user.email, field, sheetDataId)}
+            disabled={isSaving}
+            className={`p-2.5 bg-green-500 text-white rounded-xl hover:bg-green-600 transition-colors disabled:opacity-50 shadow-sm flex items-center justify-center min-w-[44px]`}
+            title="Save"
+          >
+            {isSaving ? (
+              <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin" />
+            ) : (
+              <Check className="w-5 h-5" />
+            )}
+          </button>
+          <button
+            onClick={handleCancel}
+            disabled={isSaving}
+            className="p-2.5 bg-red-500 text-white rounded-xl hover:bg-red-600 transition-colors disabled:opacity-50 shadow-sm flex items-center justify-center min-w-[44px]"
+            title="Cancel"
+          >
+            <X className="w-5 h-5" />
+          </button>
+        </div>
+      );
+    }
+
+    return (
+      <div
+        className={`flex items-center gap-2 px-3 py-2 rounded-xl border-2 border-transparent ${fieldColors.hoverBg} cursor-pointer transition-all duration-200 group`}
+        onClick={() => handleEditClick(user, field)}
+      >
+        <span className={`text-sm font-bold min-w-[80px] ${currentValue ? fieldColors.text : 'text-gray-400'}`}>
+          {currentValue || 'Not set'}
+        </span>
+        <div className={`p-2 rounded-lg ${fieldColors.iconBg} opacity-0 group-hover:opacity-100 transition-all duration-200 shadow-sm`}>
+          <Pencil className={`w-4 h-4 ${fieldColors.iconText}`} />
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -90,7 +303,7 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
       </div>
 
       <div className="overflow-x-auto">
-        <div className="min-w-[2200px]">
+        <div className="min-w-[2400px]">
           <table className="w-full text-left border-collapse">
             <thead>
               <tr className="bg-gray-50/50">
@@ -99,15 +312,6 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                 </th>
                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Contact</th>
                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Email</th>
-                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Value</th>
-                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Status</th>
-                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Bookings</th>
-                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Source</th>
-                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Stage</th>
-                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Pipeline</th>
-                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Assigned To</th>
-                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Created</th>
-                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Tags</th>
                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right cursor-pointer hover:text-gray-600 transition-colors" onClick={() => handleSort('totalSpentWhop')}>
                   <div className="flex items-center justify-end">AI CEOS Revenue <SortIcon field="totalSpentWhop" /></div>
                 </th>
@@ -117,6 +321,14 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right cursor-pointer hover:text-gray-600 transition-colors" onClick={() => handleSort('totalSpentElective')}>
                   <div className="flex items-center justify-end">Elective Revenue <SortIcon field="totalSpentElective" /></div>
                 </th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest text-right cursor-pointer hover:text-gray-600 transition-colors" onClick={() => handleSort('totalSpentFanbasis')}>
+                  <div className="flex items-center justify-end">Fanbasis Revenue <SortIcon field="totalSpentFanbasis" /></div>
+                </th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Bookings</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Source</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Closer</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Setter</th>
+                <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest">Tags</th>
                 <th className="px-6 py-5 text-[10px] font-black text-gray-400 uppercase tracking-widest cursor-pointer hover:text-gray-600 transition-colors" onClick={() => handleSort('lastPaymentDate')}>
                   <div className="flex items-center">Last Activity <SortIcon field="lastPaymentDate" /></div>
                 </th>
@@ -128,11 +340,9 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                 const ghlData = user.ghlData;
                 const contact = ghlData?.contact;
                 const opportunities = ghlData?.opportunities || [];
-                const activeOpp = opportunities.find((o: any) => o.status === 'open') || opportunities[0];
-                const totalValue = opportunities.reduce((sum: number, opp: any) => sum + (Number(opp.monetaryValue) || 0), 0);
                 const appointments = ghlData?.appointments || [];
                 const latestAppt = appointments.length > 0 ? [...appointments].sort((a: any, b: any) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime())[0] : null;
-
+                
                 return (
                   <tr key={user.email} className="hover:bg-blue-50/30 transition-colors group cursor-pointer" onClick={() => setSelectedUser(user)}>
                     <td className="px-6 py-5">
@@ -145,21 +355,10 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                       <span className="text-xs font-bold text-gray-700">{contact?.phone || '-'}</span>
                     </td>
                     <td className="px-6 py-5"><p className="text-xs text-gray-500 font-medium">{user.email}</p></td>
-                    <td className="px-6 py-5">
-                      {opportunities.length > 0 ? (
-                        <div className="flex flex-col">
-                          <span className="text-sm font-black text-gray-900">${totalValue.toLocaleString()}</span>
-                          <span className="text-[10px] text-gray-400 font-bold uppercase">{opportunities.length} Opps</span>
-                        </div>
-                      ) : <span className="text-sm text-gray-400">-</span>}
-                    </td>
-                    <td className="px-6 py-5">
-                      {activeOpp ? (
-                        <span className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase ${activeOpp.status === 'open' ? 'bg-blue-100 text-blue-700' : activeOpp.status === 'won' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'}`}>
-                          {activeOpp.status}
-                        </span>
-                      ) : <span className="text-xs text-gray-400">-</span>}
-                    </td>
+                    <td className="px-6 py-5 text-right font-bold text-gray-900">${user.totalSpentWhop.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="px-6 py-5 text-right font-bold text-gray-600">${user.totalSpentSheet.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="px-6 py-5 text-right font-black text-purple-600">${(user.totalSpentElective || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
+                    <td className="px-6 py-5 text-right font-black text-cyan-600">${(user.totalSpentFanbasis || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                     <td className="px-6 py-5">
                       {appointments.length > 0 ? (
                         <div className="flex flex-col">
@@ -178,17 +377,11 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                         {user.ghlData && <span className="px-1.5 py-0.5 bg-orange-50 text-orange-600 rounded text-[8px] font-black uppercase">GHL</span>}
                       </div>
                     </td>
-                    <td className="px-6 py-5">
-                      <span className="text-xs font-bold text-blue-600">{user.ghlStageName || '-'}</span>
+                    <td className="px-6 py-5" onClick={(e) => e.stopPropagation()}>
+                      <DropdownCell user={user} field="closer" label="Closer" />
                     </td>
-                    <td className="px-6 py-5">
-                      <span className="text-xs font-medium text-gray-700">{user.ghlPipelineName || '-'}</span>
-                    </td>
-                    <td className="px-6 py-5">
-                      <span className="text-xs font-bold text-gray-700">{user.ghlAssignedToName || 'Unassigned'}</span>
-                    </td>
-                    <td className="px-6 py-5">
-                      <span className="text-[10px] text-gray-400 font-medium">{contact?.dateAdded ? new Date(contact.dateAdded).toLocaleDateString() : '-'}</span>
+                    <td className="px-6 py-5" onClick={(e) => e.stopPropagation()}>
+                      <DropdownCell user={user} field="setter" label="Setter" />
                     </td>
                     <td className="px-6 py-5">
                       <div className="flex flex-wrap gap-1 max-w-[120px]">
@@ -197,11 +390,12 @@ export const UnifiedUserTable: React.FC<UnifiedUserTableProps> = ({ users }) => 
                         ))}
                       </div>
                     </td>
-                    <td className="px-6 py-5 text-right font-bold text-gray-900">${user.totalSpentWhop.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className="px-6 py-5 text-right font-bold text-gray-600">${user.totalSpentSheet.toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
-                    <td className="px-6 py-5 text-right font-black text-purple-600">${(user.totalSpentElective || 0).toLocaleString(undefined, { minimumFractionDigits: 2 })}</td>
                     <td className="px-6 py-5"><p className="text-xs font-bold text-gray-700">{user.lastPaymentDate ? new Date(user.lastPaymentDate).toLocaleDateString() : 'N/A'}</p></td>
-                    <td className="px-6 py-5"><button className="p-1.5 hover:bg-white rounded-lg transition-colors text-gray-400 hover:text-blue-600"><ExternalLink className="w-4 h-4" /></button></td>
+                    <td className="px-6 py-5" onClick={(e) => e.stopPropagation()}>
+                      <button className="p-1.5 hover:bg-white rounded-lg transition-colors text-gray-400 hover:text-blue-600">
+                        <ExternalLink className="w-4 h-4" />
+                      </button>
+                    </td>
                   </tr>
                 );
               })}

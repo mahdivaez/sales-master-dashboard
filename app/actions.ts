@@ -5,6 +5,25 @@ import { COMPANIES } from '@/lib/config';
 import { google } from 'googleapis';
 import { cache } from 'react';
 
+// Helper function to fetch GHL data
+async function fetchGhlData(endpoint: string, accessToken: string, locationId?: string) {
+  const baseUrl = 'https://services.leadconnectorhq.com';
+  
+  const response = await fetch(`${baseUrl}${endpoint}`, {
+    headers: {
+      'Authorization': `Bearer ${accessToken}`,
+      'Content-Type': 'application/json',
+      'Version': '2021-07-28'
+    },
+  });
+  
+  if (!response.ok) {
+    throw new Error(`GHL API error: ${response.statusText}`);
+  }
+  
+  return response.json();
+}
+
 // Helper function to convert string to camelCase
 function toCamelCase(str: string): string {
   return str
@@ -149,10 +168,21 @@ export async function getUnifiedUserData(options: {
             saleDate: 'desc'
           }
         },
+        fanbasisData: {
+          where: {
+            date: {
+              gte: start,
+              lte: end,
+            },
+          },
+          orderBy: {
+            date: 'desc'
+          }
+        },
         ghlContact: {
           include: {
-            opportunities: true,
-            appointments: true
+            appointments: true,
+            opportunities: true
           }
         },
         company: {
@@ -185,11 +215,13 @@ export async function getUnifiedUserData(options: {
 
       const totalSpentSheet = u.sheetData.reduce((sum, s) => sum + s.amount, 0);
       const totalSpentElective = u.electiveData.reduce((sum, e) => sum + e.netAmount, 0);
+      const totalSpentFanbasis = u.fanbasisData.reduce((sum, f) => sum + f.netAmount, 0);
 
       const lastPaymentDate = Math.max(
         u.payments.length > 0 ? u.payments[0].createdAt.getTime() : 0,
         u.sheetData.length > 0 ? u.sheetData[0].date.getTime() : 0,
-        u.electiveData.length > 0 ? u.electiveData[0].saleDate.getTime() : 0
+        u.electiveData.length > 0 ? u.electiveData[0].saleDate.getTime() : 0,
+        u.fanbasisData.length > 0 ? u.fanbasisData[0].date.getTime() : 0
       );
 
       // Helper to resolve GHL names
@@ -214,6 +246,19 @@ export async function getUnifiedUserData(options: {
         const gUser = ghlUsers.find(gu => gu.ghlId === guId);
         return gUser?.name || guId;
       };
+
+      // Get stage and pipeline from stored GHL opportunities
+      let ghlStageName = '-';
+      let ghlPipelineName = '-';
+      
+      if (u.ghlContact?.opportunities && u.ghlContact.opportunities.length > 0) {
+        const activeOpp = u.ghlContact.opportunities.find((o: any) => o.status === 'open') || u.ghlContact.opportunities[0];
+        
+        if (activeOpp) {
+          ghlStageName = resolveStageName(activeOpp.pipelineId, activeOpp.stageId);
+          ghlPipelineName = resolvePipelineName(activeOpp.pipelineId);
+        }
+      }
 
       return {
         email: u.email,
@@ -248,19 +293,6 @@ export async function getUnifiedUserData(options: {
             tags: u.ghlContact.tags,
             dateAdded: u.ghlContact.createdAt.toISOString()
           },
-          opportunities: u.ghlContact.opportunities.map(o => ({
-            id: o.ghlId,
-            name: o.name,
-            monetaryValue: o.monetaryValue,
-            status: o.status,
-            pipelineId: o.pipelineId,
-            pipelineStageId: o.pipelineStageId,
-            assignedTo: o.assignedTo,
-            createdAt: o.createdAt.toISOString(),
-            pipelineName: resolvePipelineName(o.pipelineId),
-            stageName: resolveStageName(o.pipelineId, o.pipelineStageId),
-            assignedToName: resolveUserName(o.assignedTo)
-          })),
           appointments: u.ghlContact.appointments.map(a => ({
             id: a.ghlId,
             title: a.title,
@@ -270,11 +302,18 @@ export async function getUnifiedUserData(options: {
             assignedToName: resolveUserName(a.assignedTo)
           })),
           ghlUsers: ghlUsers,
-          pipelines: pipelines
+          pipelines: pipelines,
+          opportunities: (u.ghlContact.opportunities || []).map((o: any) => ({
+            id: o.ghlId,
+            status: o.status,
+            monetaryValue: o.monetaryValue,
+            pipelineId: o.pipelineId,
+            stageId: o.stageId,
+          }))
         } : null,
-        ghlStageName: u.ghlContact?.opportunities[0] ? resolveStageName(u.ghlContact.opportunities[0].pipelineId, u.ghlContact.opportunities[0].pipelineStageId) : '-',
-        ghlPipelineName: u.ghlContact?.opportunities[0] ? resolvePipelineName(u.ghlContact.opportunities[0].pipelineId) : '-',
-        ghlAssignedToName: u.ghlContact?.opportunities[0] ? resolveUserName(u.ghlContact.opportunities[0].assignedTo) : (u.ghlContact ? resolveUserName(u.ghlContact.userId) : 'Unassigned'),
+        ghlStageName,
+        ghlPipelineName,
+        ghlAssignedToName: u.ghlContact ? resolveUserName(u.ghlContact.userId) : 'Unassigned',
         
         sheetData: u.sheetData.map(s => ({
           date: s.date.toISOString(),
@@ -293,11 +332,27 @@ export async function getUnifiedUserData(options: {
           customerEmail: e.customerEmail,
           netAmount: e.netAmount,
         })),
+        fanbasisData: u.fanbasisData.map(f => ({
+          amount: f.amount,
+          status: f.status,
+          date: f.date.toISOString(),
+          customerName: f.customerName,
+          customerEmail: f.customerEmail,
+          product: f.product,
+          productId: f.productId,
+          discountCode: f.discountCode,
+          discountedAmount: f.discountedAmount,
+          saleId: f.saleId,
+          netAmount: f.netAmount,
+          paymentMethod: f.paymentMethod,
+          availableToWithdraw: f.availableToWithdraw,
+        })),
         pipelineData: [],
         totalSpentWhop,
         totalSpentWhopBeforeFees,
         totalSpentSheet,
         totalSpentElective,
+        totalSpentFanbasis,
         lastPaymentDate,
         source: ['Database'],
         companies: [u.company.name]
@@ -329,7 +384,6 @@ export async function getGhlContactByEmail(email: string) {
     const contact = await prisma.ghlContact.findFirst({
       where: { email },
       include: {
-        opportunities: true,
         appointments: true
       }
     });
@@ -348,7 +402,6 @@ export async function getGhlContactByEmail(email: string) {
         phone: contact.phone,
         tags: contact.tags,
         dateAdded: contact.createdAt.toISOString(),
-        opportunities: contact.opportunities,
         appointments: contact.appointments
       }
     };

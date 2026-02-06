@@ -15,7 +15,7 @@ export const UnifiedUserModal: React.FC<UnifiedUserModalProps> = ({ user, onClos
   const appointments = ghlData?.appointments || [];
   const totalGhlValue = opportunities.reduce((sum: number, opp: any) => sum + (Number(opp.monetaryValue) || 0), 0);
   
-  const totalRevenue = (user.totalSpentWhop || 0) + (user.totalSpentElective || 0);
+  const totalRevenue = (user.totalSpentWhop || 0) + (user.totalSpentElective || 0) + (user.totalSpentFanbasis || 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 md:p-6 bg-gray-900/60 backdrop-blur-md">
@@ -96,6 +96,17 @@ export const UnifiedUserModal: React.FC<UnifiedUserModalProps> = ({ user, onClos
 
             <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
               <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 bg-cyan-50 rounded-xl flex items-center justify-center text-cyan-600">
+                  <ExternalLink className="w-5 h-5" />
+                </div>
+                <p className="text-xs font-black text-gray-400 uppercase tracking-widest">Fanbasis</p>
+              </div>
+              <p className="text-3xl font-black text-gray-900">${(user.totalSpentFanbasis || 0).toFixed(2)}</p>
+              <p className="text-[10px] font-bold text-cyan-400 mt-1 uppercase">{user.fanbasisData?.length || 0} Sales</p>
+            </div>
+
+            <div className="bg-white p-6 rounded-[2rem] border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+              <div className="flex items-center gap-3 mb-4">
                 <div className="w-10 h-10 bg-orange-50 rounded-xl flex items-center justify-center text-orange-600">
                   <Zap className="w-5 h-5" />
                 </div>
@@ -107,7 +118,7 @@ export const UnifiedUserModal: React.FC<UnifiedUserModalProps> = ({ user, onClos
           </div>
 
           {/* Data Comparison Grid */}
-          <div className="grid grid-cols-1 xl:grid-cols-5 gap-6">
+          <div className="grid grid-cols-1 xl:grid-cols-6 gap-6">
             
             {/* Column 1: AI CEOS & CRM Info */}
             <div className="space-y-8">
@@ -271,53 +282,42 @@ export const UnifiedUserModal: React.FC<UnifiedUserModalProps> = ({ user, onClos
               </div>
             </div>
 
-            {/* Column 4: GHL Opportunities */}
+            {/* Column 4: Fanbasis Sales */}
             <div className="space-y-4">
               <h3 className="text-sm font-black text-gray-900 uppercase tracking-widest flex items-center gap-2">
-                <Zap className="w-4 h-4 text-orange-500" /> GHL Opportunities
+                <ExternalLink className="w-4 h-4 text-cyan-600" /> Fanbasis Sales
               </h3>
               <div className="space-y-3 max-h-[600px] overflow-y-auto pr-2 custom-scrollbar">
-                {opportunities.length > 0 ? (
-                  opportunities.map((opp: any) => (
-                    <div key={opp.id} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:border-orange-200 transition-all">
-                      <div className="flex justify-between items-start mb-2">
-                        <p className="font-black text-gray-900 text-sm leading-tight">{opp.name}</p>
-                        <p className="font-black text-emerald-600 text-sm">${(Number(opp.monetaryValue) || 0).toLocaleString()}</p>
+                {user.fanbasisData && user.fanbasisData.length > 0 ? (
+                  user.fanbasisData.map((row: any, idx: number) => (
+                    <div key={idx} className="bg-white p-4 rounded-2xl border border-gray-100 shadow-sm hover:border-cyan-200 transition-all group">
+                      <div className="flex justify-between items-start mb-3">
+                        <div>
+                          <p className="font-black text-gray-900 text-lg leading-none">${row.netAmount.toFixed(2)}</p>
+                          <p className="text-[9px] font-bold text-cyan-500 uppercase mt-1">{row.product || 'Sale'}</p>
+                        </div>
+                        <span className="text-[9px] font-bold text-gray-400 uppercase">{new Date(row.date).toLocaleDateString()}</span>
                       </div>
-                      <div className="space-y-2">
-                        <div className="flex items-center justify-between">
-                          <span className="text-[9px] font-bold text-blue-600 uppercase tracking-tighter">
-                            {(() => {
-                              const pipeline = ghlData.pipelines?.find((p: any) => p.id === opp.pipelineId);
-                              const stage = pipeline?.stages?.find((s: any) => s.id === opp.pipelineStageId);
-                              return stage ? stage.name : 'No Stage';
-                            })()}
-                          </span>
-                          <span className={`px-2 py-0.5 rounded-full text-[8px] font-black uppercase ${
-                            opp.status === 'open' ? 'bg-blue-100 text-blue-700' : 
-                            opp.status === 'won' ? 'bg-emerald-100 text-emerald-700' : 'bg-gray-100 text-gray-500'
-                          }`}>
-                            {opp.status}
-                          </span>
+                      <div className="flex items-center justify-between bg-cyan-50/50 p-2 rounded-xl mb-2">
+                        <div className="text-center flex-1">
+                          <p className="text-[8px] text-gray-400 font-bold uppercase">Customer</p>
+                          <p className="text-[10px] font-black text-gray-700 truncate">{row.customerName || '-'}</p>
                         </div>
-                        <div className="pt-2 border-t border-gray-50 flex justify-between items-center">
-                          <div className="flex flex-col">
-                            <span className="text-[8px] text-gray-400 font-bold uppercase">Assigned To</span>
-                            <span className="text-[10px] font-black text-gray-600">
-                              {(() => {
-                                const assignedUser = ghlData.ghlUsers?.find((u: any) => u.id === opp.assignedTo);
-                                return assignedUser ? (assignedUser.name || `${assignedUser.firstName} ${assignedUser.lastName}`) : 'Unassigned';
-                              })()}
-                            </span>
-                          </div>
-                          <span className="text-[9px] text-gray-400 font-bold">{new Date(opp.createdAt).toLocaleDateString()}</span>
+                        <div className="w-px h-4 bg-cyan-100"></div>
+                        <div className="text-center flex-1">
+                          <p className="text-[8px] text-gray-400 font-bold uppercase">Status</p>
+                          <p className="text-[10px] font-black text-emerald-600">{row.status}</p>
                         </div>
+                      </div>
+                      <div className="flex justify-between text-[9px] font-bold text-gray-500 uppercase">
+                        <span>{row.paymentMethod}</span>
+                        <span>{row.availableToWithdraw ? 'Withdrawable' : 'Hold'}</span>
                       </div>
                     </div>
                   ))
                 ) : (
                   <div className="bg-white p-8 rounded-3xl border border-dashed border-gray-200 text-center">
-                    <p className="text-xs text-gray-400 font-medium">No opportunities</p>
+                    <p className="text-xs text-gray-400 font-medium">No fanbasis sales</p>
                   </div>
                 )}
               </div>

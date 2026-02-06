@@ -28,6 +28,9 @@ model Company {
   electiveData ElectiveData[]
   ghlPipelines GhlPipeline[]
   ghlUsers     GhlUser[]
+  teamMembers  TeamMember[]
+  closers     Closer[]
+  setters     Setter[]
 }
 
 model User {
@@ -46,6 +49,7 @@ model User {
   ghlContact  GhlContact?
   sheetData   SheetData[]
   electiveData ElectiveData[]
+  fanbasisData FanbasisData[]
 
   @@unique([email, companyId])
 }
@@ -103,8 +107,8 @@ model GhlContact {
   companyId  String
   company    Company  @relation(fields: [companyId], references: [id])
 
-  opportunities GhlOpportunity[]
   appointments  GhlAppointment[]
+  opportunities GhlOpportunity[]
 
   @@unique([ghlId, companyId])
 }
@@ -113,18 +117,18 @@ model GhlOpportunity {
   id            String   @id
   ghlId         String
   name          String?
+  status        String
   monetaryValue Float?
-  status        String?
   pipelineId    String?
-  pipelineStageId String?
-  assignedTo    String?
-  createdAt     DateTime
-  updatedAt     DateTime @updatedAt
-
+  stageId       String?
   contactId     String
   contact       GhlContact @relation(fields: [contactId], references: [id])
+  companyId     String
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
   @@unique([ghlId, contactId])
+  @@index([contactId])
 }
 
 model GhlAppointment {
@@ -201,6 +205,11 @@ model SheetData {
   companyId   String
   company     Company  @relation(fields: [companyId], references: [id])
   
+  closerId    String?
+  closerRel   Closer?  @relation(fields: [closerId], references: [id])
+  setterId    String?
+  setterRel   Setter?  @relation(fields: [setterId], references: [id])
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -213,14 +222,110 @@ model ElectiveData {
   customerName  String?
   customerEmail String
   netAmount     Float
-  
+
   userId        String?
   user          User?    @relation(fields: [userId], references: [id])
   companyId     String
-  company       Company  @relation(fields: [companyId], references: [id])
-  
+  company     Company  @relation(fields: [companyId], references: [id])
+
+  closerId    String?
+  closerRel   Closer?  @relation(fields: [closerId], references: [id])
+  setterId    String?
+  setterRel   Setter?  @relation(fields: [setterId], references: [id])
+
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
   @@index([customerEmail, companyId])
+}
+
+model FanbasisData {
+  id                  String   @id @default(cuid())
+  amount              Float
+  status              String
+  date                DateTime
+  customerName        String?
+  customerEmail       String
+  product             String?
+  productId           String?
+  discountCode        String?
+  discountedAmount    Float?
+  saleId              String?
+  netAmount           Float
+  paymentMethod       String?
+  availableToWithdraw String?
+
+  userId        String?
+  user          User?    @relation(fields: [userId], references: [id])
+
+  closerId    String?
+  closerRel   Closer?  @relation(fields: [closerId], references: [id])
+  setterId    String?
+  setterRel   Setter?  @relation(fields: [setterId], references: [id])
+
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([customerEmail])
+}
+
+model TeamMember {
+  id          String   @id @default(cuid())
+  name        String
+  email       String   @unique
+  password    String
+  role        String   // 'admin', 'closer', 'setter'
+  avatar      String?
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+
+  @@index([companyId, role])
+}
+
+model Closer {
+  id          String   @id @default(cuid())
+  name        String
+  email       String?
+  phone       String?
+  isActive    Boolean  @default(true)
+  totalRevenue Float   @default(0)
+  totalSales  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+
+  sheetData    SheetData[]
+  electiveData ElectiveData[]
+  fanbasisData FanbasisData[]
+
+  @@unique([name, companyId])
+  @@index([companyId, isActive])
+}
+
+model Setter {
+  id          String   @id @default(cuid())
+  name        String
+  email       String?
+  phone       String?
+  isActive    Boolean  @default(true)
+  totalRevenue Float   @default(0)
+  totalSales  Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  companyId   String
+  company     Company  @relation(fields: [companyId], references: [id])
+
+  sheetData    SheetData[]
+  electiveData ElectiveData[]
+  fanbasisData FanbasisData[]
+
+  @@unique([name, companyId])
+  @@index([companyId, isActive])
 }

@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import Papa from 'papaparse';
+import { FanbasisUpload } from '@/components/FanbasisUpload';
 
 export default function SyncPage() {
   const [loading, setLoading] = useState<string | null>(null);
@@ -166,6 +167,15 @@ export default function SyncPage() {
                 disabled={!!loading}
               />
             </div>
+          </div>
+
+          {/* CSV Uploads Fanbasis - Single file for both KCEO and HCEO */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <h2 style={{ fontSize: '1rem', fontWeight: 'bold', color: '#333' }}>CSV Sources (Fanbasis)</h2>
+            <p style={{ fontSize: '0.75rem', color: '#666', marginBottom: '0.5rem' }}>
+              Upload a single file with fanbasis transactions. Transactions will be linked to existing users by email.
+            </p>
+            <FanbasisUpload companyId="hceo" companyName="Fanbasis" onDataLoaded={() => {}} />
           </div>
 
           <hr style={{ border: '0', borderTop: '1px solid #eee', margin: '0.5rem 0' }} />
